@@ -1,0 +1,8 @@
+.gradle/
+build/
+.idea/
+.kotlin/
+local.properties
+*.db
+*.db-wal
+*.db-shm
