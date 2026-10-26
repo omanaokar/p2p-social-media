@@ -21,3 +21,5 @@ include(":contracts")
 include(":app-core")
 // P2P networking and connectivity layer (Harshil): Nearby Connections, chunking, peer table, battery policy.
 include(":transport")
+// Local feed ranking engine (Neil): weighted scoring, learned author preferences.
+include(":ranker")
