@@ -5,21 +5,41 @@ Android-first, Kotlin.
 
 ## Modules
 
-| Module      | Owner | What                                                                 |
-|-------------|-------|----------------------------------------------------------------------|
-| `contracts` | all   | Shared interfaces: `Transport`, repositories, `Ranker`, data models.  |
-| `app-core`  | Om    | SQLite storage, identity, posts/comments/reactions, DMs, sync, calls. |
+| Module      | Owner   | What                                                                 |
+|-------------|---------|----------------------------------------------------------------------|
+| `contracts` | all     | Shared interfaces: `Transport`, repositories, `Ranker`, data models.  |
+| `app-core`  | Om      | SQLite storage, identity, posts/comments/reactions, DMs, sync, calls. |
+| `transport` | Harshil | P2P networking, Nearby Connections (P2P_CLUSTER), chunking, peer table with signal strength, discovery duty cycling, battery policy, simulator & mocks. |
 
-Both are plain Kotlin/JVM libraries, so they build and test without a device.
+All three are plain Kotlin/JVM libraries, so they build and test without a device.
 The Android app module depends on them.
 
+> Detailed engineering documentation and handoff for AI agents and teammates can be found in [AGENT_HANDOFF.md](file:///c:/Users/harsh/Desktop/p2p-social-media/AGENT_HANDOFF.md).
+
 ```bash
+./gradlew test
+# Or test specific modules:
 ./gradlew :app-core:test
+./gradlew :transport:test
 ```
 
-## Using app-core from the Android app
+## Using transport and app-core from the Android app
 
 ```kotlin
+// Initialize Harshil's NearbyTransport with Android driver:
+val driver = AndroidNearbyDriver(contextProvider = { context })
+val nearbyTransport = NearbyTransport(
+    localEndpointName = "MyPhone",
+    config = TransportConfig(
+        serviceId = "com.proximity.p2p",
+        maxSimultaneousLinks = 6,
+        chunkSizeBytes = 24 * 1024,
+        dutyCycleEnabled = true,
+    ),
+    driver = driver,
+)
+
+// Initialize Om's AppCore:
 val core = AppCore.open(
     transport = nearbyTransport,                 // Harshil's Transport implementation
     keyStore = myAndroidKeyStore,                // implement KeyStore (EncryptedSharedPreferences / Keystore)
@@ -27,6 +47,8 @@ val core = AppCore.open(
     databasePath = context.getDatabasePath("proximity.db").path,
     mediaEngineFactory = null,                   // calls are a stretch goal
 )
+
+nearbyTransport.start()
 core.start()
 
 core.posts.watchFeedCandidates()   // Flow<List<FeedCandidate>> -> Neil's Ranker -> Sarthak's feed
@@ -35,7 +57,31 @@ core.messages.send(userId, "hi")
 core.profiles.watchNearbyPeers()
 ```
 
-Until the real transport lands, `com.proximity.core.testing.InMemoryNetwork` simulates phones joining and leaving.
+For testing without hardware, `com.proximity.transport.mock.MockTransport` and `com.proximity.transport.simulation.TransportSimulator` simulate phones joining, moving in 2D space, signal degradation, and walking away.
+
+## P2P Transport Layer Design (Harshil)
+
+- **Strategy:** Google Nearby Connections `P2P_CLUSTER` (M:N mesh network) running simultaneous advertising and discovery so any phone discovers any other phone.
+- **Connection Lifecycle & Collision Resolution:**
+  - Enforces a cap on simultaneous links (`maxSimultaneousLinks = 6`).
+  - Deterministic tie-breaker for simultaneous discovery collisions (`localName < remoteName` initiates, remote accepts) preventing duplicate connections or race conditions.
+  - Auto-reconnect with exponential backoff and jitter on unexpected link drops.
+- **Reliable Chunking & Reassembly:**
+  - Nearby Connections byte payload limit is 32 KB. Payloads exceeding `chunkSizeBytes` (24 KB) are transparently split into sequence-numbered chunk frames with CRC32 checksums and a unique 64-bit transfer ID.
+  - The receiver validates CRC32 integrity, ignores duplicate chunks, handles out-of-order arrival, and purges expired partial buffers. Delivers opaque `ByteArray` to the upper layers.
+- **Peer Table & Proximity Signal:**
+  - Maintains connected peers, connection timestamps, bytes sent/received, and radio RSSI.
+  - Exponentially Weighted Moving Average (EWMA) smoothing on signal strength to eliminate radio noise.
+  - Categorizes into proximity tiers (`IMMEDIATE`, `NEAR`, `FAR`) for Neil's recommendation engine.
+- **Battery Policy & Duty Cycling:**
+  - `DutyCycleController` alternates discovery active scan windows (15s) and idle sleep windows (30s).
+  - Adaptive power profiles (`NORMAL`, `BATTERY_SAVER`, `AGGRESSIVE_DISCOVERY`).
+  - `NearbyForegroundServiceDescriptor` and Android Manifest declarations for Android 8.0 - 15+ foreground service execution (`FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE`) with live scan/peer count notification.
+- **Testing & Simulator:**
+  - `InProcessNearbyDriver`: Full in-memory radio medium for running real `NearbyTransport` without devices.
+  - `MockTransport`: Interactive mock for Week 1 milestones.
+  - `TransportSimulator`: 2D physics and log-distance path loss RSSI simulator modeling the 4-phone room demo and walk-away scenarios.
+- **Opaque Bytes:** Transport never parses posts or messages; it treats every payload strictly as opaque bytes.
 
 ## Decisions taken in app-core (review as a team)
 
