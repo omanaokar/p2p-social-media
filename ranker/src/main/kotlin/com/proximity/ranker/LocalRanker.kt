@@ -2,6 +2,7 @@ package com.proximity.ranker
 
 import com.proximity.contracts.FeedCandidate
 import com.proximity.contracts.InteractionType
+import com.proximity.contracts.Post
 import com.proximity.contracts.RankContext
 import com.proximity.contracts.RankedPost
 import com.proximity.contracts.Ranker
@@ -11,6 +12,8 @@ import com.proximity.ranker.classifier.EducationalTopic
 import com.proximity.ranker.classifier.HeuristicTextClassifier
 import com.proximity.ranker.classifier.PrimaryCategory
 import com.proximity.ranker.classifier.TextContentClassifier
+import com.proximity.ranker.learning.AdaptiveLearningRecommender
+import com.proximity.ranker.moderation.ContentModerator
 import com.proximity.ranker.profile.InMemoryUserInterestProfileStore
 import com.proximity.ranker.profile.UserInterestProfileStore
 import java.time.Duration
@@ -45,7 +48,9 @@ data class RankerWeights(
 class LocalRanker(
     private val weights: RankerWeights = RankerWeights(),
     private val classifier: TextContentClassifier = HeuristicTextClassifier(),
-    val profileStore: UserInterestProfileStore = InMemoryUserInterestProfileStore()
+    val profileStore: UserInterestProfileStore = InMemoryUserInterestProfileStore(),
+    private val moderator: ContentModerator? = null,
+    private val adaptiveRecommender: AdaptiveLearningRecommender? = null
 ) : Ranker {
 
     // Maps authorId -> affinity score bounded in [-1.0, 1.0]
@@ -54,16 +59,28 @@ class LocalRanker(
     // Maps postId -> authorId to resolve postId in recordInteraction
     private val postAuthors = ConcurrentHashMap<String, String>()
 
+    // Cache postId -> Post to forward interactions to adaptiveRecommender
+    private val postCache = ConcurrentHashMap<String, Post>()
+
     override suspend fun rank(candidates: List<FeedCandidate>, context: RankContext): List<RankedPost> {
         if (candidates.isEmpty()) return emptyList()
 
         val selectedTopics = profileStore.getProfile().selectedTopics
 
-        return candidates.map { candidate ->
-            // Cache author mapping for future interaction tracking
-            postAuthors[candidate.post.id] = candidate.post.authorId
-
+        return candidates.mapNotNull { candidate ->
             val post = candidate.post
+            // Cache mapping for future interaction tracking
+            postAuthors[post.id] = post.authorId
+            postCache[post.id] = post
+
+            // Content moderation check: exclude rejected posts if moderator is provided
+            if (moderator != null) {
+                val decision = moderator.evaluate(post.body)
+                if (decision.isRejected) {
+                    return@mapNotNull null
+                }
+            }
+
             val now = context.now
 
             // 1. Freshness score (exponential decay with half-life of 4 hours)
@@ -159,22 +176,29 @@ class LocalRanker(
     }
 
     override suspend fun recordInteraction(postId: String, type: InteractionType, dwell: Duration?) {
-        val authorId = postAuthors[postId] ?: return
+        val authorId = postAuthors[postId]
+        val post = postCache[postId]
 
-        val delta = when (type) {
-            InteractionType.OPEN -> 0.10
-            InteractionType.DWELL -> {
-                val seconds = dwell?.toSeconds() ?: 0L
-                (seconds * 0.015).coerceIn(0.02, 0.20)
+        if (authorId != null) {
+            val delta = when (type) {
+                InteractionType.OPEN -> 0.10
+                InteractionType.DWELL -> {
+                    val seconds = dwell?.toSeconds() ?: 0L
+                    (seconds * 0.015).coerceIn(0.02, 0.20)
+                }
+                InteractionType.REACT -> 0.25
+                InteractionType.COMMENT -> 0.35
+                InteractionType.HIDE -> -0.60
             }
-            InteractionType.REACT -> 0.25
-            InteractionType.COMMENT -> 0.35
-            InteractionType.HIDE -> -0.60
+
+            authorAffinities.compute(authorId) { _, current ->
+                val updated = (current ?: 0.0) + delta
+                updated.coerceIn(-1.0, 1.0)
+            }
         }
 
-        authorAffinities.compute(authorId) { _, current ->
-            val updated = (current ?: 0.0) + delta
-            updated.coerceIn(-1.0, 1.0)
+        if (post != null && adaptiveRecommender != null) {
+            adaptiveRecommender.recordInteraction(post, type, dwell)
         }
     }
 

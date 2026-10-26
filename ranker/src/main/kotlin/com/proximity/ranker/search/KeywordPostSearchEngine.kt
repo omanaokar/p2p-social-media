@@ -4,6 +4,8 @@ import com.proximity.contracts.FeedCandidate
 import com.proximity.ranker.classifier.HeuristicTextClassifier
 import com.proximity.ranker.classifier.PrimaryCategory
 import com.proximity.ranker.classifier.TextContentClassifier
+import com.proximity.ranker.moderation.ContentModerator
+import java.time.Instant
 import kotlin.math.ln
 
 /**
@@ -28,8 +30,10 @@ import kotlin.math.ln
  */
 class KeywordPostSearchEngine(
     private val classifier: TextContentClassifier = HeuristicTextClassifier(),
+    private val moderator: ContentModerator? = null,
     private val k1: Double = 1.5,
-    private val b: Double = 0.75
+    private val b: Double = 0.75,
+    private val clock: () -> Instant = { Instant.now() }
 ) : PostSearchEngine {
 
     override fun search(
@@ -42,15 +46,28 @@ class KeywordPostSearchEngine(
         val queryTerms = tokenize(query)
         if (queryTerms.isEmpty()) return emptyList()   // e.g. all stop-words
 
-        // Deduplicate incoming posts by ID before scoring
-        val uniquePosts = posts.distinctBy { it.post.id }
-        if (uniquePosts.isEmpty()) return emptyList()
+        val currentTime = clock()
+
+        // 1. Deduplicate incoming posts by ID and exclude expired posts
+        val nonExpiredPosts = posts
+            .distinctBy { it.post.id }
+            .filter { !it.post.expiresAt.isBefore(currentTime) }
+
+        if (nonExpiredPosts.isEmpty()) return emptyList()
+
+        // 2. Filter out content rejected by moderation policy if moderator is present
+        val eligiblePosts = if (moderator != null) {
+            nonExpiredPosts.filter { !moderator.evaluate(it.post.body).isRejected }
+        } else {
+            nonExpiredPosts
+        }
+        if (eligiblePosts.isEmpty()) return emptyList()
 
         // Tokenise every document once
-        val tokenizedDocs = uniquePosts.map { candidate ->
+        val tokenizedDocs = eligiblePosts.map { candidate ->
             candidate to tokenize(candidate.post.body)
         }
-        val docCount = uniquePosts.size.toDouble()
+        val docCount = eligiblePosts.size.toDouble()
         val avgDocLen = tokenizedDocs.map { (_, terms) -> terms.size }
             .average().takeIf { it.isFinite() && it > 0.0 } ?: 1.0
 

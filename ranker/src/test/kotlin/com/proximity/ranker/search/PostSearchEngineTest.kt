@@ -269,6 +269,20 @@ class KeywordPostSearchEngineTest {
         val result = engine.tokenize(null)
         assertTrue(result.isEmpty())
     }
+
+    @Test
+    fun `expired posts are excluded from keyword search results`() {
+        val clock = { BASE_TIME.plus(Duration.ofHours(5)) }
+        val engineWithClock = KeywordPostSearchEngine(clock = clock)
+
+        val validPost = candidate("valid", body = "kotlin programming basics", createdAt = BASE_TIME.plus(Duration.ofHours(2)))
+        val expiredPost = candidate("expired", body = "kotlin programming advanced", createdAt = BASE_TIME) // ttl 6h -> expires at +6h. Wait, at +5h it is not expired, let's make ttl 4h or createdAt earlier:
+        val trulyExpiredPost = candidate("expired", body = "kotlin programming advanced", createdAt = BASE_TIME.minus(Duration.ofHours(10)))
+
+        val results = engineWithClock.search("kotlin", listOf(validPost, trulyExpiredPost))
+        assertEquals(1, results.size)
+        assertEquals("valid", results.first().candidate.post.id)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -278,9 +292,15 @@ class KeywordPostSearchEngineTest {
 class SemanticPostSearchEngineTest {
 
     /** Helper: engine with canned embeddings. */
-    private fun engineWith(vararg pairs: Pair<String, FloatArray>): SemanticPostSearchEngine {
+    private fun engineWith(
+        vararg pairs: Pair<String, FloatArray>,
+        fallbackEngine: PostSearchEngine? = null,
+        clock: () -> Instant = { BASE_TIME }
+    ): SemanticPostSearchEngine {
         return SemanticPostSearchEngine(
-            MockEmbeddingProvider(dimension = 3, embeddings = mapOf(*pairs))
+            embeddingProvider = MockEmbeddingProvider(dimension = 3, embeddings = mapOf(*pairs)),
+            fallbackEngine = fallbackEngine,
+            clock = clock
         )
     }
 
@@ -427,5 +447,89 @@ class SemanticPostSearchEngineTest {
             assertTrue(results[i].relevanceScore >= results[i + 1].relevanceScore,
                 "Results must be sorted descending by score")
         }
+    }
+
+    @Test
+    fun `semantically related query with different wording matches based on embedding proximity`() {
+        // Query and post share zero common words, but embeddings capture conceptual proximity
+        val query = "call stack frame unwinding"
+        val queryVec = floatArrayOf(0.95f, 0.05f, 0f)
+
+        val relatedBody = "recursive function self invocation base case"
+        val relatedVec = floatArrayOf(0.90f, 0.10f, 0f) // Cosine similarity ~0.999
+
+        val unrelatedBody = "baking sourdough bread with yeast"
+        val unrelatedVec = floatArrayOf(0f, 0f, 1f)     // Orthogonal
+
+        val engine = engineWith(
+            query to queryVec,
+            relatedBody to relatedVec,
+            unrelatedBody to unrelatedVec
+        )
+
+        val results = engine.search(query, listOf(
+            candidate("p1", body = relatedBody),
+            candidate("p2", body = unrelatedBody)
+        ))
+
+        assertEquals(1, results.size, "Orthogonal post must be excluded")
+        assertEquals("p1", results.first().candidate.post.id)
+        assertTrue(results.first().relevanceScore > 0.95)
+    }
+
+    @Test
+    fun `expired posts are excluded from semantic search results`() {
+        val query = "quantum computing"
+        val queryVec = floatArrayOf(1f, 0f, 0f)
+        val body = "quantum superposition and qubit states"
+        val bodyVec = floatArrayOf(1f, 0f, 0f)
+
+        val searchClock = { BASE_TIME.plus(Duration.ofHours(10)) }
+
+        val engine = engineWith(
+            query to queryVec,
+            body to bodyVec,
+            clock = searchClock
+        )
+
+        val expiredPost = candidate("exp", body = body, createdAt = BASE_TIME) // expires at BASE_TIME + 6h
+        val results = engine.search(query, listOf(expiredPost))
+        assertTrue(results.isEmpty(), "Expired post should be excluded from semantic search")
+    }
+
+    @Test
+    fun `falls back to keyword search when query embedding is missing`() {
+        val keywordFallback = KeywordPostSearchEngine(clock = { BASE_TIME })
+        // Provider has NO embedding for query "compiler optimization"
+        val engine = engineWith(
+            "some known body" to floatArrayOf(1f, 0f, 0f),
+            fallbackEngine = keywordFallback
+        )
+
+        val post = candidate("p1", body = "compiler optimization and bytecode generation techniques")
+        val results = engine.search("compiler optimization", listOf(post))
+
+        assertEquals(1, results.size, "Should seamlessly fall back to keyword search")
+        assertEquals("p1", results.first().candidate.post.id)
+        assertTrue(results.first().relevanceScore > 0.0)
+    }
+
+    @Test
+    fun `falls back to keyword search when posts have missing embeddings`() {
+        val keywordFallback = KeywordPostSearchEngine(clock = { BASE_TIME })
+        val query = "databases"
+        val queryVec = floatArrayOf(1f, 0f, 0f)
+
+        // Query has embedding, but candidate post body has NO embedding in provider
+        val engine = engineWith(
+            query to queryVec,
+            fallbackEngine = keywordFallback
+        )
+
+        val post = candidate("p1", body = "relational databases and sql query indexing")
+        val results = engine.search(query, listOf(post))
+
+        assertEquals(1, results.size, "Should fall back to keyword search when candidates lack embeddings")
+        assertEquals("p1", results.first().candidate.post.id)
     }
 }
