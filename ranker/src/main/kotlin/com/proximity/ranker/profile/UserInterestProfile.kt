@@ -1,15 +1,18 @@
 package com.proximity.ranker.profile
 
 import com.proximity.ranker.classifier.EducationalTopic
+import com.proximity.ranker.studygroup.StudyGoal
 import java.io.File
 
 /**
  * User's cold-start and ongoing interest profile.
  *
  * @param selectedTopics The set of educational topics explicitly selected by the user.
+ * @param studyGoals The set of compatible study goals selected by the user.
  */
 data class UserInterestProfile(
-    val selectedTopics: Set<EducationalTopic> = emptySet()
+    val selectedTopics: Set<EducationalTopic> = emptySet(),
+    val studyGoals: Set<StudyGoal> = emptySet()
 )
 
 /**
@@ -19,6 +22,7 @@ interface UserInterestProfileStore {
     fun getProfile(): UserInterestProfile
     fun updateProfile(profile: UserInterestProfile)
     fun updateSelectedTopics(topics: Set<EducationalTopic>)
+    fun updateStudyGoals(goals: Set<StudyGoal>)
 }
 
 /**
@@ -38,13 +42,18 @@ class InMemoryUserInterestProfileStore(
     }
 
     override fun updateSelectedTopics(topics: Set<EducationalTopic>) {
-        currentProfile = UserInterestProfile(selectedTopics = topics)
+        currentProfile = currentProfile.copy(selectedTopics = topics)
+    }
+
+    override fun updateStudyGoals(goals: Set<StudyGoal>) {
+        currentProfile = currentProfile.copy(studyGoals = goals)
     }
 }
 
 /**
  * Simple file-backed persistence for [UserInterestProfile] using pure Kotlin/JVM file I/O.
- * Persists selected topics as comma-separated enum names.
+ * Persists selected topics as comma-separated enum names on line 1,
+ * and optional study goals on line 2.
  * Falls back safely to empty profile if the file does not exist or is corrupted.
  */
 class FileUserInterestProfileStore(
@@ -62,37 +71,59 @@ class FileUserInterestProfileStore(
     }
 
     override fun updateSelectedTopics(topics: Set<EducationalTopic>) {
-        updateProfile(UserInterestProfile(selectedTopics = topics))
+        updateProfile(cachedProfile.copy(selectedTopics = topics))
+    }
+
+    override fun updateStudyGoals(goals: Set<StudyGoal>) {
+        updateProfile(cachedProfile.copy(studyGoals = goals))
     }
 
     private fun loadFromFile(): UserInterestProfile {
         if (!storageFile.exists()) return UserInterestProfile()
         return try {
-            val content = storageFile.readText().trim()
-            if (content.isEmpty()) {
+            val lines = storageFile.readLines().map { it.trim() }.filter { it.isNotEmpty() }
+            if (lines.isEmpty()) {
                 UserInterestProfile()
             } else {
-                val topics = content.split(",")
-                    .mapNotNull { name ->
-                        try {
-                            EducationalTopic.valueOf(name.trim())
-                        } catch (e: IllegalArgumentException) {
-                            null
-                        }
-                    }
-                    .toSet()
-                UserInterestProfile(selectedTopics = topics)
+                val topics = lines.getOrNull(0)?.let { parseTopics(it) } ?: emptySet()
+                val goals = lines.getOrNull(1)?.let { parseGoals(it) } ?: emptySet()
+                UserInterestProfile(selectedTopics = topics, studyGoals = goals)
             }
         } catch (e: Exception) {
             UserInterestProfile()
         }
     }
 
+    private fun parseTopics(line: String): Set<EducationalTopic> {
+        return line.split(",")
+            .mapNotNull { name ->
+                try {
+                    EducationalTopic.valueOf(name.trim())
+                } catch (e: IllegalArgumentException) {
+                    null
+                }
+            }
+            .toSet()
+    }
+
+    private fun parseGoals(line: String): Set<StudyGoal> {
+        return line.split(",")
+            .mapNotNull { name ->
+                try {
+                    StudyGoal.valueOf(name.trim())
+                } catch (e: IllegalArgumentException) {
+                    null
+                }
+            }
+            .toSet()
+    }
+
     private fun saveToFile(profile: UserInterestProfile) {
         try {
             storageFile.parentFile?.mkdirs()
-            val text = profile.selectedTopics.joinToString(",") { it.name }
-            storageFile.writeText(text)
+            val topics = profile.selectedTopics.joinToString(",") { it.name }
+            val goals = profile.studyGoals.joinToString(",") { it.name }
+            storageFile.writeText("$topics\n$goals")
         } catch (_: Exception) {
             // Keep memory cache intact even if disk write fails
         }
