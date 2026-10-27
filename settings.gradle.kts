@@ -23,3 +23,5 @@ include(":app-core")
 include(":transport")
 // Local feed ranking engine (Neil): weighted scoring, learned author preferences.
 include(":ranker")
+// Android application & UI layer (Sarthak): Jetpack Compose UI.
+include(":app")
