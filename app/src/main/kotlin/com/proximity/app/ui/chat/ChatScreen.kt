@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -52,6 +53,7 @@ import com.proximity.app.ui.viewmodels.ChatViewModel
 import com.proximity.contracts.ChatMessage
 import com.proximity.contracts.Conversation
 import com.proximity.contracts.MessageStatus
+import com.proximity.contracts.PeerProfile
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,8 +73,10 @@ fun ChatScreen(
             // Inbox View
             InboxView(
                 inbox = uiState.inbox,
+                nearbyPeers = uiState.nearbyPeers,
                 isLoading = uiState.isLoading,
-                onSelectConversation = { peerId -> viewModel.openConversation(peerId) }
+                onSelectConversation = { peerId -> viewModel.openConversation(peerId) },
+                onMessageNearbyPeer = { peerId -> viewModel.openConversation(peerId) },
             )
         } else {
             // Conversation Thread
@@ -90,8 +94,10 @@ fun ChatScreen(
 @Composable
 fun InboxView(
     inbox: List<Conversation>,
+    nearbyPeers: List<PeerProfile>,
     isLoading: Boolean,
     onSelectConversation: (String) -> Unit,
+    onMessageNearbyPeer: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -99,25 +105,89 @@ fun InboxView(
             isLoading -> {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             }
-            inbox.isEmpty() -> {
+            inbox.isEmpty() && nearbyPeers.isEmpty() -> {
                 EmptyStateView(
                     title = "No conversations yet",
-                    description = "When you discover nearby peers or receive messages, your encrypted P2P chats will appear here.",
+                    description = "Connect to a peer from the Mesh tab. Nearby peers will appear here so you can start an encrypted chat.",
                     icon = Icons.Default.Email,
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
             else -> {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(inbox, key = { it.peerId }) { conversation ->
-                        ConversationItem(
-                            conversation = conversation,
-                            onClick = { onSelectConversation(conversation.peerId) }
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    val existingPeerIds = inbox.mapTo(mutableSetOf()) { it.peerId }
+                    val newNearbyPeers = nearbyPeers.filterNot { it.userId in existingPeerIds }
+
+                    if (newNearbyPeers.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "Nearby peers",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                            )
+                        }
+                        items(newNearbyPeers, key = { "nearby-${it.userId}" }) { peer ->
+                            NearbyPeerItem(
+                                peer = peer,
+                                onClick = { onMessageNearbyPeer(peer.userId) }
+                            )
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                        }
+                    }
+
+                    if (inbox.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "Conversations",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                            )
+                        }
+                        items(inbox, key = { it.peerId }) { conversation ->
+                            ConversationItem(
+                                conversation = conversation,
+                                onClick = { onSelectConversation(conversation.peerId) }
+                            )
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun NearbyPeerItem(
+    peer: PeerProfile,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+    ) {
+        AvatarBadge(name = peer.profile.displayName ?: "Peer", size = 48.dp)
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = peer.profile.displayName ?: "Peer ${peer.userId.take(8)}",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "Connected nearby · Tap to message",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Button(onClick = onClick) {
+            Text("Message")
         }
     }
 }

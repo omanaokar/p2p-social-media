@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.proximity.app.AppContainer
 import com.proximity.contracts.ChatMessage
 import com.proximity.contracts.Conversation
+import com.proximity.contracts.PeerProfile
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -23,6 +24,7 @@ import kotlinx.coroutines.launch
 data class ChatUiState(
     val isLoading: Boolean = true,
     val inbox: List<Conversation> = emptyList(),
+    val nearbyPeers: List<PeerProfile> = emptyList(),
     val activePeerId: String? = null,
     val activeMessages: List<ChatMessage> = emptyList(),
     val isSending: Boolean = false,
@@ -49,8 +51,13 @@ class ChatViewModel(
             if (core == null) {
                 flowOf(ChatUiState(isLoading = true))
             } else {
-                combine(
+                val inboxAndPeers = combine(
                     core.messages.watchInbox(),
+                    core.profiles.watchNearbyPeers(),
+                ) { inboxList, nearbyPeers -> inboxList to nearbyPeers }
+
+                combine(
+                    inboxAndPeers,
                     _activePeerId.flatMapLatest { peerId ->
                         if (peerId == null) flowOf(emptyList())
                         else core.messages.watchConversation(peerId)
@@ -58,10 +65,11 @@ class ChatViewModel(
                     _activePeerId,
                     _isSending,
                     _errorMessage,
-                ) { inboxList, messagesList, peerId, isSending, error ->
+                ) { (inboxList, nearbyPeers), messagesList, peerId, isSending, error ->
                     ChatUiState(
                         isLoading = false,
                         inbox = inboxList,
+                        nearbyPeers = nearbyPeers,
                         activePeerId = peerId,
                         activeMessages = messagesList,
                         isSending = isSending,
