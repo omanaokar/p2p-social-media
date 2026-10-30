@@ -14,6 +14,7 @@ import com.proximity.ranker.classifier.PrimaryCategory
 import com.proximity.ranker.classifier.TextContentClassifier
 import com.proximity.ranker.learning.AdaptiveLearningRecommender
 import com.proximity.ranker.moderation.ContentModerator
+import com.proximity.ranker.profile.EventAwareUserInterestProfileStore
 import com.proximity.ranker.profile.InMemoryUserInterestProfileStore
 import com.proximity.ranker.profile.UserInterestProfileStore
 import java.time.Duration
@@ -76,7 +77,8 @@ class LocalRanker(
     val profileStore: UserInterestProfileStore = InMemoryUserInterestProfileStore(),
     private val moderator: ContentModerator? = null,
     private val adaptiveRecommender: AdaptiveLearningRecommender? = null,
-    private val postResolver: (suspend (String) -> Post?)? = null
+    private val postResolver: (suspend (String) -> Post?)? = null,
+    private var interactionEventLedger: InteractionEventLedger? = null,
 ) : Ranker {
 
     // Maps authorId -> affinity score bounded in [-1.0, 1.0]
@@ -276,6 +278,18 @@ class LocalRanker(
             return
         }
 
+        // Hold the configured ledger for this whole interaction so a later
+        // configuration change cannot split begin/complete across instances.
+        val eventLedger = interactionEventLedger
+        if (eventId != null && eventLedger != null) {
+            try {
+                if (!eventLedger.begin(eventId)) return
+            } catch (e: Throwable) {
+                processedEventIds.remove(eventId)
+                throw e
+            }
+        }
+
         if (authorId != null) {
             // Author affinity sits on a [-1.0, 1.0] scale centered at 0.0 with single-author specificity.
             // In contrast, topic interest in UserInterestProfile sits on a [0.0, 1.0] scale centered at 0.50
@@ -301,13 +315,28 @@ class LocalRanker(
             }
         }
 
-        if (post != null) {
-            if (adaptiveRecommender != null) {
-                adaptiveRecommender.recordInteraction(post, type, dwell)
-            } else {
+        try {
+            if (post != null) {
                 val classification = classifier.classify(post.body)
-                profileStore.recordInteraction(post, type, classification)
+                val profileWasRecorded = if (eventId != null && profileStore is EventAwareUserInterestProfileStore) {
+                    profileStore.recordInteractionOnce(eventId, post, type, classification)
+                    true
+                } else {
+                    false
+                }
+                if (adaptiveRecommender != null) {
+                    adaptiveRecommender.recordInteraction(post, type, dwell, profileAlreadyRecorded = profileWasRecorded)
+                } else if (!profileWasRecorded) {
+                    profileStore.recordInteraction(post, type, classification)
+                }
             }
+
+            if (eventId != null && eventLedger != null) {
+                eventLedger.complete(eventId)
+            }
+        } catch (e: Throwable) {
+            if (eventId != null) processedEventIds.remove(eventId)
+            throw e
         }
     }
 
@@ -338,5 +367,10 @@ class LocalRanker(
      */
     fun resetEventHistory() {
         processedEventIds.clear()
+    }
+
+    /** Configures optional application-owned durable event handling after construction. */
+    internal fun setInteractionEventLedger(ledger: InteractionEventLedger?) {
+        interactionEventLedger = ledger
     }
 }

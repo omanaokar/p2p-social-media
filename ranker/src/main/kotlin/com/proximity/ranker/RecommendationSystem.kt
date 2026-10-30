@@ -64,7 +64,7 @@ class RecommendationSystem(
         profileStore = profileStore,
         moderator = moderator,
         adaptiveRecommender = adaptiveRecommender,
-        postResolver = postResolver
+        postResolver = postResolver,
     ),
     val embeddingProvider: EmbeddingProvider? = null,
     val searchEngine: PostSearchEngine = if (embeddingProvider != null) {
@@ -89,8 +89,14 @@ class RecommendationSystem(
     val studyGroupMatcher: StudyGroupMatcher = LocalStudyGroupMatcher(
         profileStore = profileStore,
         classifier = classifier
-    )
+    ),
+    /** Optional application-owned durable ledger for interaction event IDs. */
+    val interactionEventLedger: InteractionEventLedger? = null,
 ) {
+    init {
+        ranker.setInteractionEventLedger(interactionEventLedger)
+    }
+
     /** Ranks feed candidates using proximity, engagement, freshness, and user interests. */
     suspend fun rankFeed(candidates: List<FeedCandidate>, context: RankContext): List<RankedPost> =
         ranker.rank(candidates, context)

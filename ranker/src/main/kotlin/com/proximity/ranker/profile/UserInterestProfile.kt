@@ -61,6 +61,20 @@ interface UserInterestProfileStore {
 }
 
 /**
+ * Optional capability for stores that can durably couple an interaction ID to
+ * its profile update.  A false return means the profile already contains the
+ * event; an exception means no durable acknowledgement was made.
+ */
+interface EventAwareUserInterestProfileStore : UserInterestProfileStore {
+    fun recordInteractionOnce(
+        eventId: String,
+        post: Post,
+        type: InteractionType,
+        classification: ClassificationResult,
+    ): Boolean
+}
+
+/**
  * In-memory implementation of [UserInterestProfileStore].
  * Safe default when no file/disk storage is configured.
  */
@@ -107,10 +121,11 @@ class InMemoryUserInterestProfileStore(
  */
 class FileUserInterestProfileStore(
     private val storageFile: File
-) : UserInterestProfileStore {
+) : EventAwareUserInterestProfileStore {
 
     @Volatile
     private var cachedProfile: UserInterestProfile = loadFromFile()
+    private val processedEventIds = loadProcessedEventIds()
 
     override fun getProfile(): UserInterestProfile = cachedProfile
 
@@ -149,11 +164,28 @@ class FileUserInterestProfileStore(
         }
     }
 
+    override fun recordInteractionOnce(
+        eventId: String,
+        post: Post,
+        type: InteractionType,
+        classification: ClassificationResult,
+    ): Boolean {
+        if (classification.category != PrimaryCategory.EDUCATIONAL || classification.educationalTopics.isEmpty()) return false
+        synchronized(this) {
+            if (eventId in processedEventIds) return false
+            val updated = computeUpdatedProfile(cachedProfile, classification.educationalTopics, type)
+            saveToFile(updated, processedEventIds + eventId)
+            cachedProfile = updated
+            processedEventIds += eventId
+            return true
+        }
+    }
+
     private fun loadFromFile(): UserInterestProfile {
         if (!storageFile.exists()) return UserInterestProfile()
         return try {
-            val lines = storageFile.readLines().map { it.trim() }.filter { it.isNotEmpty() }
-            if (lines.isEmpty()) {
+            val lines = storageFile.readLines().map { it.trim() }
+            if (lines.all { it.isEmpty() }) {
                 UserInterestProfile()
             } else {
                 val topics = lines.getOrNull(0)?.let { parseTopics(it) } ?: emptySet()
@@ -206,29 +238,44 @@ class FileUserInterestProfileStore(
             .toSet()
     }
 
-    private fun saveToFile(profile: UserInterestProfile) {
+    private fun loadProcessedEventIds(): MutableSet<String> =
+        if (!storageFile.exists()) mutableSetOf() else runCatching {
+            storageFile.readLines().mapNotNull { line ->
+                line.trim().removePrefix(EVENT_PREFIX).takeIf { line.trim().startsWith(EVENT_PREFIX) && it.isNotBlank() }
+            }.toMutableSet()
+        }.getOrElse { mutableSetOf() }
+
+    private fun saveToFile(profile: UserInterestProfile, eventIds: Set<String> = processedEventIds) {
+        storageFile.parentFile?.mkdirs()
+        val topics = profile.selectedTopics.joinToString(",") { it.name }
+        val goals = profile.studyGoals.joinToString(",") { it.name }
+        val scoreLines = profile.topicScores.map { (topic, score) ->
+            val count = profile.interactionCounts[topic] ?: 1
+            // 3 decimal precision
+            val roundedScore = ((score * 1000.0).roundToInt()) / 1000.0
+            "${topic.name}=$roundedScore:$count"
+        }
+        val content = buildString {
+            appendLine(topics)
+            appendLine(goals)
+            for (sl in scoreLines) appendLine(sl)
+            for (eventId in eventIds.sorted()) appendLine("$EVENT_PREFIX$eventId")
+        }
+        val temporary = File(storageFile.parentFile ?: File("."), ".${storageFile.name}.tmp")
         try {
-            storageFile.parentFile?.mkdirs()
-            val topics = profile.selectedTopics.joinToString(",") { it.name }
-            val goals = profile.studyGoals.joinToString(",") { it.name }
-            val scoreLines = profile.topicScores.map { (topic, score) ->
-                val count = profile.interactionCounts[topic] ?: 1
-                // 3 decimal precision
-                val roundedScore = ((score * 1000.0).roundToInt()) / 1000.0
-                "${topic.name}=$roundedScore:$count"
-            }
-            val content = buildString {
-                appendLine(topics)
-                appendLine(goals)
-                for (sl in scoreLines) {
-                    appendLine(sl)
-                }
-            }
-            storageFile.writeText(content)
-        } catch (_: Exception) {
-            // Keep memory cache intact even if disk write fails
+            temporary.writeText(content)
+            java.nio.file.Files.move(
+                temporary.toPath(), storageFile.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+            )
+        } catch (e: Exception) {
+            temporary.delete()
+            throw IllegalStateException("Could not persist interest profile", e)
         }
     }
+
+    private companion object { const val EVENT_PREFIX = "event:" }
 }
 
 /**

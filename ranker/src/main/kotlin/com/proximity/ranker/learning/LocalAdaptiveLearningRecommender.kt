@@ -43,11 +43,15 @@ class LocalAdaptiveLearningRecommender(
     private val engagements = ConcurrentHashMap<EducationalTopic, TopicEngagement>()
 
     override fun recordInteraction(post: Post, type: InteractionType, dwell: Duration?) {
+        recordInteraction(post, type, dwell, profileAlreadyRecorded = false)
+    }
+
+    override fun recordInteraction(post: Post, type: InteractionType, dwell: Duration?, profileAlreadyRecorded: Boolean) {
         val classification = classifier.classify(post.body)
         if (classification.category != PrimaryCategory.EDUCATIONAL) return
 
         // Update persistent profileStore topic scores
-        profileStore.recordInteraction(post, type, classification)
+        if (!profileAlreadyRecorded) profileStore.recordInteraction(post, type, classification)
 
         val topics = classification.educationalTopics
         if (topics.isEmpty()) return

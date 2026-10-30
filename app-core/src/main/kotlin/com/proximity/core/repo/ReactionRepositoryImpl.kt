@@ -13,6 +13,7 @@ import com.proximity.core.store.toReaction
 import com.proximity.core.sync.SyncEngine
 import com.proximity.core.wire.ObjectKind
 import com.proximity.core.wire.SignedObject
+import com.proximity.ranker.RecommendationSystem
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
@@ -25,6 +26,7 @@ class ReactionRepositoryImpl(
     private val identity: IdentityService,
     private val clock: Clock,
     private val io: CoroutineDispatcher,
+    private val recommendations: RecommendationSystem? = null,
 ) : ReactionRepository {
 
     override suspend fun add(targetId: String, type: String): Reaction {
@@ -49,7 +51,11 @@ class ReactionRepositoryImpl(
         )
         store.saveLocal(obj)
         sync.publish(obj)
-        db.query("SELECT * FROM reactions WHERE id = ?", obj.id).first().toReaction()
+        val reaction = db.query("SELECT * FROM reactions WHERE id = ?", obj.id).first().toReaction()
+        if (type != Reaction.REMOVED) {
+            recommendations?.recordFeedInteraction(postId = postId, type = com.proximity.contracts.InteractionType.REACT, eventId = obj.id)
+        }
+        reaction
     }
 
     private fun postIdFor(targetId: String): String {
@@ -72,4 +78,28 @@ class ReactionRepositoryImpl(
         }
         (counts.keys + mine.keys).associateWith { ReactionSummary(counts[it].orEmpty(), mine[it]) }
     }.flowOn(io)
+
+    override suspend fun getReactedPostIds(userId: String): Set<String> = withContext(io) {
+        db.query(
+            """SELECT DISTINCT post_id FROM reactions
+               WHERE author_id = ? AND type != ?
+                 AND author_id NOT IN (SELECT user_id FROM blocked)""",
+            userId, Reaction.REMOVED,
+        ).map { it.str("post_id") }.toSet()
+    }
+
+    override suspend fun getPeerReactedPostIds(): Map<String, Set<String>> = withContext(io) {
+        val me = identity.currentUser.id
+        val rows = db.query(
+            """SELECT author_id, post_id FROM reactions
+               WHERE author_id != ? AND type != ?
+                 AND author_id NOT IN (SELECT user_id FROM blocked)""",
+            me, Reaction.REMOVED,
+        )
+        val result = mutableMapOf<String, MutableSet<String>>()
+        for (row in rows) {
+            result.getOrPut(row.str("author_id")) { mutableSetOf() }.add(row.str("post_id"))
+        }
+        result
+    }
 }

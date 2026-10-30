@@ -140,6 +140,14 @@ interface AdaptiveLearningRecommender {
      */
     fun recordInteraction(post: Post, type: com.proximity.contracts.InteractionType, dwell: java.time.Duration? = null)
 
+    /** Records runtime engagement when the profile update was persisted by an event-aware store. */
+    fun recordInteraction(
+        post: Post,
+        type: com.proximity.contracts.InteractionType,
+        dwell: java.time.Duration? = null,
+        profileAlreadyRecorded: Boolean,
+    ) = recordInteraction(post, type, dwell)
+
     /**
      * Retrieves current tracked engagement for a topic.
      */
