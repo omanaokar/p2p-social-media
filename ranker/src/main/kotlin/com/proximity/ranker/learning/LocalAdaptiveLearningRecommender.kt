@@ -70,6 +70,10 @@ class LocalAdaptiveLearningRecommender(
                         reactCount = prev.reactCount + 1,
                         lastInteractedAt = Instant.now()
                     )
+                    InteractionType.SAVE -> prev.copy(
+                        saveCount = prev.saveCount + 1,
+                        lastInteractedAt = Instant.now()
+                    )
                     InteractionType.COMMENT -> prev.copy(
                         commentCount = prev.commentCount + 1,
                         lastInteractedAt = Instant.now()
@@ -203,7 +207,7 @@ class LocalAdaptiveLearningRecommender(
             AdaptivePostRecommendation(
                 candidate = candidate,
                 topic = primaryTopic,
-                score = totalScore,
+                score = totalScore.coerceIn(0.0, 1.0),
                 status = topicRec.status,
                 explanation = postExplanation
             )

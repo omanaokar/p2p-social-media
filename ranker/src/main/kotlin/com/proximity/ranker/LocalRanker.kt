@@ -24,18 +24,43 @@ import kotlin.math.max
 
 /**
  * Weights used by [LocalRanker] to compute composite relevance scores.
+ * All default weights are strictly normalized to sum to 1.0.
  */
 data class RankerWeights(
-    val signalWeight: Double = 0.25,
-    val freshnessWeight: Double = 0.25,
-    val hopCountWeight: Double = 0.15,
+    val signalWeight: Double = 0.15,
+    val freshnessWeight: Double = 0.20,
+    val hopCountWeight: Double = 0.10,
     val engagementWeight: Double = 0.15,
-    val authorAffinityWeight: Double = 0.15,
+    val authorAffinityWeight: Double = 0.10,
     /** Bonus multiplier for educational topics. */
-    val educationalBoostWeight: Double = 0.15,
+    val educationalBoostWeight: Double = 0.10,
     /** Bonus multiplier for matching user-selected cold-start interest topics. */
-    val topicPreferenceWeight: Double = 0.25
-)
+    val topicPreferenceWeight: Double = 0.20
+) {
+    val totalWeight: Double
+        get() = signalWeight + freshnessWeight + hopCountWeight +
+                engagementWeight + authorAffinityWeight + educationalBoostWeight + topicPreferenceWeight
+
+    init {
+        val weights = listOf(
+            "signalWeight" to signalWeight,
+            "freshnessWeight" to freshnessWeight,
+            "hopCountWeight" to hopCountWeight,
+            "engagementWeight" to engagementWeight,
+            "authorAffinityWeight" to authorAffinityWeight,
+            "educationalBoostWeight" to educationalBoostWeight,
+            "topicPreferenceWeight" to topicPreferenceWeight
+        )
+        for ((name, w) in weights) {
+            require(!w.isNaN()) { "Weight '$name' cannot be NaN" }
+            require(!w.isInfinite()) { "Weight '$name' cannot be infinite, found $w" }
+            require(w >= 0.0) { "Weight '$name' must be non-negative, found $w" }
+        }
+        require(!totalWeight.isNaN() && !totalWeight.isInfinite() && totalWeight > 0.0) {
+            "Total weight must be positive and finite, found $totalWeight"
+        }
+    }
+}
 
 /**
  * In-memory local ranking engine implementing [Ranker].
@@ -50,7 +75,8 @@ class LocalRanker(
     private val classifier: TextContentClassifier = HeuristicTextClassifier(),
     val profileStore: UserInterestProfileStore = InMemoryUserInterestProfileStore(),
     private val moderator: ContentModerator? = null,
-    private val adaptiveRecommender: AdaptiveLearningRecommender? = null
+    private val adaptiveRecommender: AdaptiveLearningRecommender? = null,
+    private val postResolver: (suspend (String) -> Post?)? = null
 ) : Ranker {
 
     // Maps authorId -> affinity score bounded in [-1.0, 1.0]
@@ -61,6 +87,10 @@ class LocalRanker(
 
     // Cache postId -> Post to forward interactions to adaptiveRecommender
     private val postCache = ConcurrentHashMap<String, Post>()
+
+    // Tracks processed event IDs / idempotency keys to ensure duplicate event dispatches are idempotent
+    // while allowing repeated legitimate interactions on the same post.
+    private val processedEventIds = ConcurrentHashMap.newKeySet<String>()
 
     override suspend fun rank(candidates: List<FeedCandidate>, context: RankContext): List<RankedPost> {
         if (candidates.isEmpty()) return emptyList()
@@ -158,13 +188,16 @@ class LocalRanker(
             }
 
             // Composite score
-            val compositeScore = (weights.freshnessWeight * freshnessScore) +
+            val rawCompositeScore = (weights.freshnessWeight * freshnessScore) +
                 (weights.signalWeight * signalScore) +
                 (weights.hopCountWeight * hopScore) +
                 (weights.engagementWeight * engagementScore) +
                 (weights.authorAffinityWeight * authorScore) +
                 (weights.educationalBoostWeight * educationalScore) +
                 (weights.topicPreferenceWeight * preferenceScore)
+
+            // Normalize by total weight and clamp strictly in [0.0, 1.0]
+            val compositeScore = (rawCompositeScore / weights.totalWeight).coerceIn(0.0, 1.0)
 
             // Human-readable reason string
             val reason = buildString {
@@ -199,10 +232,57 @@ class LocalRanker(
     }
 
     override suspend fun recordInteraction(postId: String, type: InteractionType, dwell: Duration?) {
-        val authorId = postAuthors[postId]
-        val post = postCache[postId]
+        recordInteraction(postId, type, dwell, explicitPost = null, eventId = null)
+    }
+
+    /**
+     * Records an interaction on a post, supporting uncached posts via explicit [explicitPost]
+     * or fallback [postResolver].
+     *
+     * @param eventId Optional idempotency key / event ID. When provided, duplicate dispatches
+     * with the same event ID are ignored. When null, repeated legitimate interactions are recorded.
+     */
+    suspend fun recordInteraction(
+        postId: String,
+        type: InteractionType,
+        dwell: Duration? = null,
+        explicitPost: Post? = null,
+        eventId: String? = null
+    ) {
+        if (eventId != null && !processedEventIds.add(eventId)) {
+            // Duplicate event dispatch already processed
+            return
+        }
+
+        // Cache explicit post if provided
+        if (explicitPost != null) {
+            postAuthors[explicitPost.id] = explicitPost.authorId
+            postCache[explicitPost.id] = explicitPost
+        }
+
+        // Resolve post: 1. from postCache, 2. from postResolver
+        val post = postCache[postId] ?: postResolver?.invoke(postId)?.also {
+            postAuthors[it.id] = it.authorId
+            postCache[it.id] = it
+        }
+
+        val authorId = postAuthors[postId] ?: post?.authorId
+
+        if (authorId == null && post == null) {
+            // Post could not be resolved; rollback event ID so future retry can succeed
+            if (eventId != null) {
+                processedEventIds.remove(eventId)
+            }
+            return
+        }
 
         if (authorId != null) {
+            // Author affinity sits on a [-1.0, 1.0] scale centered at 0.0 with single-author specificity.
+            // In contrast, topic interest in UserInterestProfile sits on a [0.0, 1.0] scale centered at 0.50
+            // and is shared across multiple matched topics with logarithmic diminishing returns damping.
+            // On the author affinity scale, SAVE (+0.30) sits proportionally between REACT (+0.25) and
+            // COMMENT (+0.35), reflecting the user commitment hierarchy: OPEN (0.10) < REACT (0.25) < SAVE (0.30) < COMMENT (0.35).
+            // On the topic interest scale, SAVE (+0.20) sits between REACT (+0.15) and COMMENT (+0.25).
             val delta = when (type) {
                 InteractionType.OPEN -> 0.10
                 InteractionType.DWELL -> {
@@ -210,6 +290,7 @@ class LocalRanker(
                     (seconds * 0.015).coerceIn(0.02, 0.20)
                 }
                 InteractionType.REACT -> 0.25
+                InteractionType.SAVE -> 0.30
                 InteractionType.COMMENT -> 0.35
                 InteractionType.HIDE -> -0.60
             }
@@ -231,7 +312,31 @@ class LocalRanker(
     }
 
     /**
+     * Overload accepting an explicit [Post] and optional [eventId].
+     */
+    suspend fun recordInteraction(
+        post: Post,
+        type: InteractionType,
+        dwell: Duration? = null,
+        eventId: String? = null
+    ) {
+        recordInteraction(post.id, type, dwell, post, eventId)
+    }
+
+    /**
      * Inspect learned affinity for testing/debugging.
      */
     fun getAuthorAffinity(authorId: String): Double = authorAffinities[authorId] ?: 0.0
+
+    /**
+     * Checks if an event ID has already been processed.
+     */
+    fun isEventProcessed(eventId: String): Boolean = processedEventIds.contains(eventId)
+
+    /**
+     * Resets processed event history (for testing).
+     */
+    fun resetEventHistory() {
+        processedEventIds.clear()
+    }
 }

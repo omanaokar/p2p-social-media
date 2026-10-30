@@ -48,10 +48,11 @@ data class TopicEngagement(
     val commentCount: Int = 0,
     val hideCount: Int = 0,
     val totalDwellSeconds: Long = 0,
-    val lastInteractedAt: Instant? = null
+    val lastInteractedAt: Instant? = null,
+    val saveCount: Int = 0
 ) {
-    val totalInteractions: Int get() = openCount + reactCount + commentCount + hideCount
-    val positiveInteractions: Int get() = reactCount + commentCount + (if (totalDwellSeconds >= 30) 1 else 0)
+    val totalInteractions: Int get() = openCount + reactCount + commentCount + hideCount + saveCount
+    val positiveInteractions: Int get() = reactCount + commentCount + saveCount + (if (totalDwellSeconds >= 30) 1 else 0)
 
     /**
      * Net behavioral score bounded in [-1.0, 5.0].
@@ -59,7 +60,7 @@ data class TopicEngagement(
     val engagementScore: Double
         get() {
             if (totalInteractions == 0) return 0.0
-            val positive = (openCount * 0.2) + (reactCount * 0.5) + (commentCount * 0.8) + (totalDwellSeconds / 60.0 * 0.3)
+            val positive = (openCount * 0.2) + (reactCount * 0.5) + (saveCount * 0.6) + (commentCount * 0.8) + (totalDwellSeconds / 60.0 * 0.3)
             val negative = hideCount * 1.0
             return (positive - negative).coerceIn(-1.0, 5.0)
         }

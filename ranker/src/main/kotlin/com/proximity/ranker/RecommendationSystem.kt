@@ -2,6 +2,7 @@ package com.proximity.ranker
 
 import com.proximity.contracts.FeedCandidate
 import com.proximity.contracts.InteractionType
+import com.proximity.contracts.Post
 import com.proximity.contracts.RankContext
 import com.proximity.contracts.RankedPost
 import com.proximity.ranker.classifier.EducationalTopic
@@ -53,6 +54,7 @@ class RecommendationSystem(
     val classifier: TextContentClassifier = HeuristicTextClassifier(),
     val moderator: ContentModerator = DefaultContentModerator(classifier = classifier),
     val clock: () -> Instant = { Instant.now() },
+    val postResolver: (suspend (String) -> Post?)? = null,
     val adaptiveRecommender: AdaptiveLearningRecommender = LocalAdaptiveLearningRecommender(
         profileStore = profileStore,
         classifier = classifier
@@ -61,7 +63,8 @@ class RecommendationSystem(
         classifier = classifier,
         profileStore = profileStore,
         moderator = moderator,
-        adaptiveRecommender = adaptiveRecommender
+        adaptiveRecommender = adaptiveRecommender,
+        postResolver = postResolver
     ),
     val embeddingProvider: EmbeddingProvider? = null,
     val searchEngine: PostSearchEngine = if (embeddingProvider != null) {
@@ -93,8 +96,21 @@ class RecommendationSystem(
         ranker.rank(candidates, context)
 
     /** Records user interaction on a feed post, updating both author affinity and topic learning models. */
-    suspend fun recordFeedInteraction(postId: String, type: InteractionType, dwell: Duration? = null) =
-        ranker.recordInteraction(postId, type, dwell)
+    suspend fun recordFeedInteraction(
+        postId: String,
+        type: InteractionType,
+        dwell: Duration? = null,
+        post: Post? = null,
+        eventId: String? = null
+    ) = ranker.recordInteraction(postId, type, dwell, post, eventId)
+
+    /** Records user interaction on a feed post with an explicit post instance. */
+    suspend fun recordFeedInteraction(
+        post: Post,
+        type: InteractionType,
+        dwell: Duration? = null,
+        eventId: String? = null
+    ) = ranker.recordInteraction(post, type, dwell, eventId)
 
     /** Searches available candidates using BM25+ term matching and educational topic bonus. */
     fun search(query: String?, candidates: List<FeedCandidate>, limit: Int = 20): List<SearchResult> =

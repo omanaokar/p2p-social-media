@@ -116,6 +116,22 @@ class UserInterestProfileTest {
     }
 
     @Test
+    fun `recordInteraction increases score on SAVE`() {
+        val store = InMemoryUserInterestProfileStore()
+        val post = samplePost("p-save", "Cloud computing and Kubernetes microservices architecture")
+        val cloudClass = sampleClassification(
+            primaryTopic = EducationalTopic.CLOUD_COMPUTING,
+            topics = setOf(EducationalTopic.CLOUD_COMPUTING)
+        )
+
+        // Initial SAVE: baseline 0.50 + 0.20 = 0.70
+        store.recordInteraction(post, InteractionType.SAVE, cloudClass)
+        val profile = store.getProfile()
+        assertEquals(0.70, profile.getInterestScore(EducationalTopic.CLOUD_COMPUTING), 0.001)
+        assertEquals(1, profile.interactionCounts[EducationalTopic.CLOUD_COMPUTING])
+    }
+
+    @Test
     fun `recordInteraction ignores non-educational posts`() {
         val store = InMemoryUserInterestProfileStore()
         val post = samplePost("p-casual", "Having lunch with friends")

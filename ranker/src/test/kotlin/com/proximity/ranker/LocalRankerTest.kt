@@ -12,6 +12,8 @@ import java.time.Duration
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class LocalRankerTest {
@@ -189,5 +191,266 @@ class LocalRankerTest {
 
         assertEquals(run1.map { it.candidate.post.id }, run2.map { it.candidate.post.id })
         assertEquals(run1.map { it.score }, run2.map { it.score })
+    }
+
+    @Test
+    fun `default RankerWeights sum to exactly 1_0`() {
+        val weights = RankerWeights()
+        assertEquals(1.0, weights.totalWeight, 0.0001)
+    }
+
+    @Test
+    fun `final ranking scores are strictly bounded within 0 to 1 under maximum signals and exploration bonus`() = runBlocking {
+        val store = InMemoryUserInterestProfileStore()
+        store.updateSelectedTopics(setOf(EducationalTopic.AI_ML))
+        val adaptiveRecommender = com.proximity.ranker.learning.LocalAdaptiveLearningRecommender(profileStore = store)
+
+        // Super-boosted candidate: maximum freshness (age 0), 0 hops, maximum RSSI (-30), massive reactions (50+), author affinity
+        val candidate = candidate(
+            id = "perfect-post",
+            authorId = "author-perfect",
+            body = "Deep learning and neural networks PyTorch model implementation with gradient descent.",
+            createdAt = baseTime,
+            hopCount = 0,
+            signal = -30,
+            commentCount = 50,
+            reactions = mapOf("like" to 100)
+        )
+
+        val boundedRanker = LocalRanker(
+            profileStore = store,
+            adaptiveRecommender = adaptiveRecommender
+        )
+
+        // Maximize author affinity
+        boundedRanker.rank(listOf(candidate), RankContext(baseTime, "me"))
+        boundedRanker.recordInteraction("perfect-post", InteractionType.REACT)
+        boundedRanker.recordInteraction("perfect-post", InteractionType.COMMENT)
+        boundedRanker.recordInteraction("perfect-post", InteractionType.SAVE)
+
+        val ranked = boundedRanker.rank(listOf(candidate), RankContext(baseTime, "me"))
+        assertEquals(1, ranked.size)
+        val score = ranked.first().score
+        assertTrue(score in 0.0..1.0, "Score $score must be bounded within [0.0, 1.0]")
+    }
+
+    @Test
+    fun `custom RankerWeights that do not sum to 1_0 are properly normalized`() = runBlocking {
+        // Deliberately oversized custom weights summing to 2.5
+        val oversizedWeights = RankerWeights(
+            signalWeight = 0.50,
+            freshnessWeight = 0.50,
+            hopCountWeight = 0.30,
+            engagementWeight = 0.30,
+            authorAffinityWeight = 0.30,
+            educationalBoostWeight = 0.30,
+            topicPreferenceWeight = 0.30
+        )
+        val customRanker = LocalRanker(weights = oversizedWeights)
+
+        val candidate = candidate("test-post", signal = -40)
+        val ranked = customRanker.rank(listOf(candidate), RankContext(baseTime, "me"))
+        assertEquals(1, ranked.size)
+        val score = ranked.first().score
+        assertTrue(score in 0.0..1.0, "Normalized score $score must be in [0.0, 1.0]")
+    }
+
+    @Test
+    fun `SAVE interaction updates author affinity and persistent profile`() = runBlocking {
+        val store = InMemoryUserInterestProfileStore()
+        val customRanker = LocalRanker(profileStore = store)
+
+        val post = candidate(
+            id = "post-save",
+            authorId = "author-save",
+            body = "Algorithms and data structures dynamic programming tutorial."
+        )
+
+        customRanker.rank(listOf(post), RankContext(baseTime, "me"))
+        customRanker.recordInteraction("post-save", InteractionType.SAVE)
+
+        // Author affinity should be positive (+0.30)
+        assertTrue(customRanker.getAuthorAffinity("author-save") > 0.25)
+
+        // Topic score for DSA should have increased by +0.20
+        val profile = store.getProfile()
+        assertEquals(0.70, profile.getInterestScore(EducationalTopic.DSA), 0.001)
+        assertEquals(1, profile.interactionCounts[EducationalTopic.DSA])
+    }
+
+    @Test
+    fun `uncached post interaction via explicit Post updates affinity and profile`() = runBlocking {
+        val store = InMemoryUserInterestProfileStore()
+        val customRanker = LocalRanker(profileStore = store)
+
+        val uncachedPost = candidate(
+            id = "uncached-1",
+            authorId = "author-uncached",
+            body = "Cybersecurity penetration testing and ethical hacking tutorial."
+        ).post
+
+        // Never called rank() on uncachedPost! Directly record interaction with explicit Post
+        customRanker.recordInteraction(uncachedPost, InteractionType.REACT)
+
+        // Author affinity must be updated
+        assertEquals(0.25, customRanker.getAuthorAffinity("author-uncached"), 0.001)
+
+        // Interest profile must be updated
+        val profile = store.getProfile()
+        assertEquals(0.65, profile.getInterestScore(EducationalTopic.CYBERSECURITY), 0.001)
+        assertEquals(1, profile.interactionCounts[EducationalTopic.CYBERSECURITY])
+    }
+
+    @Test
+    fun `uncached post interaction via postResolver updates affinity and profile`() = runBlocking {
+        val store = InMemoryUserInterestProfileStore()
+        val resolvedPost = candidate(
+            id = "resolver-post",
+            authorId = "author-resolved",
+            body = "Mathematics calculus differential equations notes."
+        ).post
+
+        val customRanker = LocalRanker(
+            profileStore = store,
+            postResolver = { id -> if (id == "resolver-post") resolvedPost else null }
+        )
+
+        // Never called rank() on resolver-post! Directly record interaction with ID only
+        customRanker.recordInteraction("resolver-post", InteractionType.SAVE)
+
+        assertEquals(0.30, customRanker.getAuthorAffinity("author-resolved"), 0.001)
+
+        val profile = store.getProfile()
+        assertEquals(0.70, profile.getInterestScore(EducationalTopic.MATHEMATICS), 0.001)
+    }
+
+    @Test
+    fun `repeated legitimate interactions on the same post are recorded and progressively damped`() = runBlocking {
+        val store = InMemoryUserInterestProfileStore()
+        val customRanker = LocalRanker(profileStore = store)
+
+        val post = candidate(
+            id = "repeated-post",
+            authorId = "author-rep",
+            body = "Programming in Rust and concurrency concepts."
+        )
+
+        customRanker.rank(listOf(post), RankContext(baseTime, "me"))
+
+        // Multiple legitimate comments on the same post (e.g. back-and-forth discussion)
+        customRanker.recordInteraction("repeated-post", InteractionType.COMMENT)
+        assertEquals(0.35, customRanker.getAuthorAffinity("author-rep"), 0.001)
+        assertEquals(1, store.getProfile().interactionCounts[EducationalTopic.PROGRAMMING])
+        val score1 = store.getProfile().getInterestScore(EducationalTopic.PROGRAMMING)
+
+        // Second comment on the same post
+        customRanker.recordInteraction("repeated-post", InteractionType.COMMENT)
+        assertEquals(0.70, customRanker.getAuthorAffinity("author-rep"), 0.001)
+        assertEquals(2, store.getProfile().interactionCounts[EducationalTopic.PROGRAMMING])
+        val score2 = store.getProfile().getInterestScore(EducationalTopic.PROGRAMMING)
+        assertTrue(score2 > score1, "Second comment must increase topic interest")
+
+        // Delta should be damped (diminishing return)
+        val delta1 = score1 - 0.50
+        val delta2 = score2 - score1
+        assertTrue(delta2 < delta1, "Damping must reduce gain on repeated interaction: delta2 ($delta2) < delta1 ($delta1)")
+    }
+
+    @Test
+    fun `duplicate event dispatch with same eventId is idempotent`() = runBlocking {
+        val store = InMemoryUserInterestProfileStore()
+        val customRanker = LocalRanker(profileStore = store)
+
+        val post = candidate(
+            id = "idempotent-post",
+            authorId = "author-idem",
+            body = "Cloud computing architectures and Docker containerization."
+        )
+
+        customRanker.rank(listOf(post), RankContext(baseTime, "me"))
+
+        val eventKey = "event-rx-987"
+
+        // First dispatch of eventKey
+        customRanker.recordInteraction("idempotent-post", InteractionType.REACT, eventId = eventKey)
+        assertEquals(0.25, customRanker.getAuthorAffinity("author-idem"), 0.001)
+        assertEquals(1, store.getProfile().interactionCounts[EducationalTopic.CLOUD_COMPUTING])
+        assertTrue(customRanker.isEventProcessed(eventKey))
+
+        // Duplicate dispatch with exact same eventKey
+        customRanker.recordInteraction("idempotent-post", InteractionType.REACT, eventId = eventKey)
+
+        // Affinity and counts must remain unchanged
+        assertEquals(0.25, customRanker.getAuthorAffinity("author-idem"), 0.001)
+        assertEquals(1, store.getProfile().interactionCounts[EducationalTopic.CLOUD_COMPUTING])
+
+        // Different eventId for another interaction on the same post succeeds
+        val secondEventKey = "event-save-988"
+        customRanker.recordInteraction("idempotent-post", InteractionType.SAVE, eventId = secondEventKey)
+        assertEquals(0.55, customRanker.getAuthorAffinity("author-idem"), 0.001)
+        assertEquals(2, store.getProfile().interactionCounts[EducationalTopic.CLOUD_COMPUTING])
+        assertTrue(customRanker.isEventProcessed(secondEventKey))
+    }
+
+    @Test
+    fun `SAVE weighting reflects deliberate commitment hierarchy`() = runBlocking {
+        // Hierarchy: OPEN < REACT < SAVE < COMMENT
+        // Topic interest: OPEN (0.08) < REACT (0.15) < SAVE (0.20) < COMMENT (0.25)
+        // Author affinity: OPEN (0.10) < REACT (0.25) < SAVE (0.30) < COMMENT (0.35)
+
+        val post = candidate("hierarchy-post", authorId = "author-h", body = "Data structures and algorithms.").post
+
+        val rankerSave = LocalRanker(profileStore = InMemoryUserInterestProfileStore())
+        val rankerReact = LocalRanker(profileStore = InMemoryUserInterestProfileStore())
+        val rankerComment = LocalRanker(profileStore = InMemoryUserInterestProfileStore())
+
+        rankerSave.recordInteraction(post, InteractionType.SAVE)
+        rankerReact.recordInteraction(post, InteractionType.REACT)
+        rankerComment.recordInteraction(post, InteractionType.COMMENT)
+
+        // Author affinity check
+        val affinityReact = rankerReact.getAuthorAffinity("author-h")
+        val affinitySave = rankerSave.getAuthorAffinity("author-h")
+        val affinityComment = rankerComment.getAuthorAffinity("author-h")
+        assertTrue(affinityReact < affinitySave && affinitySave < affinityComment,
+            "Author affinity hierarchy: $affinityReact (REACT) < $affinitySave (SAVE) < $affinityComment (COMMENT)")
+
+        // Topic interest check
+        val topicReact = rankerReact.profileStore.getProfile().getInterestScore(EducationalTopic.DSA)
+        val topicSave = rankerSave.profileStore.getProfile().getInterestScore(EducationalTopic.DSA)
+        val topicComment = rankerComment.profileStore.getProfile().getInterestScore(EducationalTopic.DSA)
+        assertTrue(topicReact < topicSave && topicSave < topicComment,
+            "Topic interest hierarchy: $topicReact (REACT) < $topicSave (SAVE) < $topicComment (COMMENT)")
+    }
+
+    @Test
+    fun `custom RankerWeights rejects invalid weights with IllegalArgumentException`() {
+        // Negative weight
+        assertFailsWith<IllegalArgumentException> {
+            RankerWeights(signalWeight = -0.1)
+        }
+
+        // NaN weight
+        assertFailsWith<IllegalArgumentException> {
+            RankerWeights(freshnessWeight = Double.NaN)
+        }
+
+        // Infinite weight
+        assertFailsWith<IllegalArgumentException> {
+            RankerWeights(hopCountWeight = Double.POSITIVE_INFINITY)
+        }
+
+        // All zero weights
+        assertFailsWith<IllegalArgumentException> {
+            RankerWeights(
+                signalWeight = 0.0,
+                freshnessWeight = 0.0,
+                hopCountWeight = 0.0,
+                engagementWeight = 0.0,
+                authorAffinityWeight = 0.0,
+                educationalBoostWeight = 0.0,
+                topicPreferenceWeight = 0.0
+            )
+        }
     }
 }

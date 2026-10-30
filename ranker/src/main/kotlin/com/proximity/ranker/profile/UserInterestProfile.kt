@@ -254,6 +254,7 @@ internal fun computeUpdatedProfile(
 ): UserInterestProfile {
     val baseDelta = when (type) {
         InteractionType.REACT -> 0.15
+        InteractionType.SAVE -> 0.20
         InteractionType.COMMENT -> 0.25
         InteractionType.OPEN -> 0.08
         InteractionType.DWELL -> 0.05
