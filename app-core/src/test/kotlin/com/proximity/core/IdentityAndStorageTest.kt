@@ -46,7 +46,7 @@ class IdentityAndStorageTest {
 
         val first = h.node("a", keyStore = keys, databasePath = path)
         first.core.profiles.updateMyProfile(displayName = "Om")
-        val post = first.core.posts.create("persisted")
+        val post = first.core.posts.create("Persisted educational tutorial on Kotlin coroutines and SQLite storage.")
         first.core.close()
 
         val reopened = Harness().node("a2", keyStore = keys, databasePath = path)

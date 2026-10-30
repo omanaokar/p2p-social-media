@@ -31,6 +31,7 @@ import com.proximity.ranker.studygroup.StudyGroupMatch
 import com.proximity.ranker.studygroup.StudyGroupMatcher
 import com.proximity.ranker.studygroup.StudyGroupMatchingContext
 import java.time.Duration
+import java.time.Instant
 
 /**
  * Cohesive coordinator for all local ML and recommendation components in Proximity.
@@ -43,13 +44,15 @@ import java.time.Duration
  *   friend recommendations, study group matching, and adaptive learning topics.
  * - Interaction Loop: Feed interactions via [recordFeedInteraction] automatically update
  *   author affinities in [ranker] AND topic engagements in [adaptiveRecommender].
- * - Safety Enforcement: Moderation policies in [moderator] filter prohibited content
- *   consistently from both feed ranking and search retrieval.
+ * - Safety & Educational Enforcement: Moderation and classification strictly filter out
+ *   non-educational, inappropriate, or uncertain content from feed ranking, search,
+ *   and peer/study-group recommendations.
  */
 class RecommendationSystem(
     val profileStore: UserInterestProfileStore = InMemoryUserInterestProfileStore(),
     val classifier: TextContentClassifier = HeuristicTextClassifier(),
     val moderator: ContentModerator = DefaultContentModerator(classifier = classifier),
+    val clock: () -> Instant = { Instant.now() },
     val adaptiveRecommender: AdaptiveLearningRecommender = LocalAdaptiveLearningRecommender(
         profileStore = profileStore,
         classifier = classifier
@@ -64,12 +67,16 @@ class RecommendationSystem(
     val searchEngine: PostSearchEngine = if (embeddingProvider != null) {
         SemanticPostSearchEngine(
             embeddingProvider = embeddingProvider,
-            fallbackEngine = KeywordPostSearchEngine(classifier = classifier, moderator = moderator)
+            fallbackEngine = KeywordPostSearchEngine(classifier = classifier, moderator = moderator, clock = clock),
+            classifier = classifier,
+            moderator = moderator,
+            clock = clock
         )
     } else {
         KeywordPostSearchEngine(
             classifier = classifier,
-            moderator = moderator
+            moderator = moderator,
+            clock = clock
         )
     },
     val peerRecommender: PeerRecommender = LocalPeerRecommender(

@@ -137,7 +137,7 @@ class CosineSimilarityTest {
 
 class KeywordPostSearchEngineTest {
 
-    private val engine = KeywordPostSearchEngine()
+    private val engine = KeywordPostSearchEngine(clock = { BASE_TIME })
 
     @Test
     fun `null query returns empty list`() {

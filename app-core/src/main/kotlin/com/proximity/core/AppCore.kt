@@ -23,6 +23,10 @@ import com.proximity.core.repo.ReactionRepositoryImpl
 import com.proximity.core.store.ObjectStore
 import com.proximity.core.sync.PeerTable
 import com.proximity.core.sync.SyncEngine
+import com.proximity.ranker.classifier.HeuristicTextClassifier
+import com.proximity.ranker.classifier.TextContentClassifier
+import com.proximity.ranker.moderation.ContentModerator
+import com.proximity.ranker.moderation.DefaultContentModerator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -77,6 +81,8 @@ class AppCore private constructor(
             config: AppConfig = AppConfig(),
             clock: Clock = Clock.SYSTEM,
             mediaEngineFactory: MediaEngineFactory? = null,
+            classifier: TextContentClassifier = HeuristicTextClassifier(),
+            moderator: ContentModerator = DefaultContentModerator(classifier = classifier),
         ): AppCore {
             // One thread for sync so peer messages are handled in order; the
             // database lock covers repository calls from other threads.
@@ -85,14 +91,14 @@ class AppCore private constructor(
             val identity = LocalIdentity.load(keyStore)
             val db = AppDatabase.open(driver, databasePath)
             val crypto = DmCrypto(identity)
-            val store = ObjectStore(db, identity, crypto, config, clock)
+            val store = ObjectStore(db, identity, crypto, config, clock, classifier, moderator)
             val peers = PeerTable()
             val sync = SyncEngine(transport, store, identity, peers, config, clock, scope)
             val profiles = ProfileRepositoryImpl(db, store, sync, peers, identity, clock, io)
             profiles.ensureProfile()
             return AppCore(
                 identity = identity,
-                posts = PostRepositoryImpl(db, store, sync, identity, config, clock, io),
+                posts = PostRepositoryImpl(db, store, sync, identity, config, clock, io, classifier, moderator),
                 comments = CommentRepositoryImpl(db, store, sync, identity, clock, io),
                 reactions = ReactionRepositoryImpl(db, store, sync, identity, clock, io),
                 messages = MessageRepositoryImpl(db, store, sync, identity, crypto, clock, io),

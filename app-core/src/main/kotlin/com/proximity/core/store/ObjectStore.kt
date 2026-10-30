@@ -12,6 +12,10 @@ import com.proximity.core.fromBase64
 import com.proximity.core.messaging.DmCrypto
 import com.proximity.core.wire.ObjectKind
 import com.proximity.core.wire.SignedObject
+import com.proximity.ranker.classifier.HeuristicTextClassifier
+import com.proximity.ranker.classifier.TextContentClassifier
+import com.proximity.ranker.moderation.ContentModerator
+import com.proximity.ranker.moderation.DefaultContentModerator
 import java.time.Instant
 
 class IngestResult private constructor(
@@ -36,8 +40,10 @@ class ObjectStore(
     private val crypto: DmCrypto,
     private val config: AppConfig,
     private val clock: Clock,
+    val classifier: TextContentClassifier = HeuristicTextClassifier(),
+    val moderator: ContentModerator = DefaultContentModerator(classifier = classifier),
 ) {
-    private val guard = SpamGuard(config)
+    private val guard = SpamGuard(config, classifier, moderator)
     private val me: String get() = identity.currentUser.id
 
     // ------------------------------------------------------------- writes

@@ -73,10 +73,15 @@ class LocalRanker(
             postAuthors[post.id] = post.authorId
             postCache[post.id] = post
 
-            // Content moderation check: exclude rejected posts if moderator is provided
+            // Content classification & moderation check: strictly enforce educational-only content
+            val classification: ClassificationResult = classifier.classify(post.body)
+            if (!classification.isEducational || classification.category != PrimaryCategory.EDUCATIONAL) {
+                return@mapNotNull null
+            }
+
             if (moderator != null) {
-                val decision = moderator.evaluate(post.body)
-                if (decision.isRejected) {
+                val decision = moderator.decide(classification)
+                if (!decision.isApproved) {
                     return@mapNotNull null
                 }
             }
@@ -106,22 +111,16 @@ class LocalRanker(
             val authorScore = ((affinity + 1.0) / 2.0).coerceIn(0.0, 1.0)
 
             // 6. Educational Content Boost & User Interest Matching
-            val classification: ClassificationResult = classifier.classify(post.body)
-            val educationalScore = when (classification.category) {
-                PrimaryCategory.EDUCATIONAL -> when (classification.confidence) {
-                    ConfidenceLevel.HIGH -> 1.0
-                    ConfidenceLevel.MEDIUM -> 0.7
-                    ConfidenceLevel.LOW -> 0.4
-                    ConfidenceLevel.UNCERTAIN -> 0.2
-                }
-                PrimaryCategory.NON_EDUCATIONAL -> 0.1
-                PrimaryCategory.UNCERTAIN -> 0.2
-                PrimaryCategory.ADULT -> 0.0
+            val educationalScore = when (classification.confidence) {
+                ConfidenceLevel.HIGH -> 1.0
+                ConfidenceLevel.MEDIUM -> 0.7
+                ConfidenceLevel.LOW -> 0.4
+                ConfidenceLevel.UNCERTAIN -> 0.0
             }
 
             // 7. Topic Preference Score (Cold-start interest alignment)
             // Checks if any detected educational topic in the post matches the user's selected interests
-            val matchedPreferences = if (selectedTopics.isNotEmpty() && classification.category == PrimaryCategory.EDUCATIONAL) {
+            val matchedPreferences = if (selectedTopics.isNotEmpty()) {
                 classification.educationalTopics.intersect(selectedTopics)
             } else {
                 emptySet()

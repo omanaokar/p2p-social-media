@@ -343,6 +343,8 @@ class LocalAdaptiveLearningRecommender(
             EducationalTopic.AI_ML -> to == EducationalTopic.MATHEMATICS || to == EducationalTopic.PROGRAMMING
             EducationalTopic.CYBERSECURITY -> to == EducationalTopic.CLOUD_COMPUTING || to == EducationalTopic.PROGRAMMING
             EducationalTopic.CLOUD_COMPUTING -> to == EducationalTopic.CYBERSECURITY || to == EducationalTopic.PROGRAMMING
+            EducationalTopic.SCIENCE_ENGINEERING -> to == EducationalTopic.MATHEMATICS || to == EducationalTopic.ACADEMIC_RESEARCH
+            EducationalTopic.ACADEMIC_RESEARCH -> to == EducationalTopic.SCIENCE_ENGINEERING || to == EducationalTopic.AI_ML
         }
     }
 }

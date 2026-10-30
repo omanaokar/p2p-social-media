@@ -6,8 +6,13 @@ package com.proximity.ranker.classifier
 enum class PrimaryCategory {
     EDUCATIONAL,
     NON_EDUCATIONAL,
-    ADULT,
-    UNCERTAIN
+    INAPPROPRIATE,
+    UNCERTAIN;
+
+    companion object {
+        @Deprecated("Use INAPPROPRIATE instead", ReplaceWith("INAPPROPRIATE"))
+        val ADULT: PrimaryCategory get() = INAPPROPRIATE
+    }
 }
 
 /**
@@ -31,6 +36,19 @@ enum class AdultFlag {
 }
 
 /**
+ * Specific indicators flagged for inappropriate, abusive, or prohibited content.
+ */
+enum class InappropriateFlag {
+    EXPLICIT_SEXUAL,
+    PORNOGRAPHY,
+    SOLICITATION,
+    HARASSMENT_ABUSE,
+    HATE_SPEECH,
+    VIOLENCE_THREAT,
+    PROHIBITED_COMMERCIAL
+}
+
+/**
  * Outcome of text classification.
  *
  * @param category High-level determined category.
@@ -39,6 +57,7 @@ enum class AdultFlag {
  * @param confidence Confidence in the classification.
  * @param topicScores Detailed heuristic match scores per educational topic.
  * @param adultFlags Specific adult indicators flagged, if any.
+ * @param inappropriateFlags Specific inappropriate indicators flagged, if any.
  * @param summary Human-readable classification explanation.
  */
 data class ClassificationResult(
@@ -48,8 +67,10 @@ data class ClassificationResult(
     val confidence: ConfidenceLevel,
     val topicScores: Map<EducationalTopic, Double>,
     val adultFlags: Set<AdultFlag> = emptySet(),
+    val inappropriateFlags: Set<InappropriateFlag> = emptySet(),
     val summary: String
 ) {
-    val isEducational: Boolean get() = category == PrimaryCategory.EDUCATIONAL
-    val isAdult: Boolean get() = category == PrimaryCategory.ADULT || adultFlags.isNotEmpty()
+    val isEducational: Boolean get() = category == PrimaryCategory.EDUCATIONAL && confidence != ConfidenceLevel.UNCERTAIN
+    val isInappropriate: Boolean get() = category == PrimaryCategory.INAPPROPRIATE || adultFlags.isNotEmpty() || inappropriateFlags.isNotEmpty()
+    val isAdult: Boolean get() = isInappropriate
 }

@@ -23,7 +23,7 @@ import kotlin.test.assertTrue
 
 class RecommendationSystemIntegrationTest {
 
-    private val now = Instant.parse("2026-10-27T00:00:00Z")
+    private val now = Instant.now()
 
     private fun profile(userId: String): Profile = Profile(
         id = "id-$userId",
@@ -74,15 +74,20 @@ class RecommendationSystemIntegrationTest {
         // Set user cold-start interest in AI/ML
         system.profileStore.updateSelectedTopics(setOf(EducationalTopic.AI_ML))
 
-        val aiPost = candidate("p1", "Deep neural network backpropagation and PyTorch gradient descent.")
-        val casualPost = candidate("p2", "Having a wonderful weekend brunch with friends at the park.")
+                val aiPost = candidate("p1", "Deep neural network backpropagation and PyTorch gradient descent.")
+        val otherEduPost = candidate("p2", "Kotlin coroutines structured concurrency and memory management tutorial.")
 
-        val ranked = system.rankFeed(listOf(casualPost, aiPost), RankContext(now, "me"))
+        val ranked = system.rankFeed(listOf(otherEduPost, aiPost), RankContext(now, "me"))
 
         assertEquals(2, ranked.size)
         assertEquals("p1", ranked[0].candidate.post.id, "AI/ML post should rank highest due to topic match")
         assertTrue(ranked[0].score > ranked[1].score)
         assertTrue(ranked[0].reason.contains("AI / Machine Learning (preferred topic)"))
+
+        val casualPost = candidate("p3", "Having a wonderful weekend brunch with friends at the park.")
+        val rankedWithCasual = system.rankFeed(listOf(casualPost, aiPost), RankContext(now, "me"))
+        assertEquals(1, rankedWithCasual.size, "Casual content must be excluded from feed ranking")
+        assertEquals("p1", rankedWithCasual[0].candidate.post.id)
     }
 
     @Test

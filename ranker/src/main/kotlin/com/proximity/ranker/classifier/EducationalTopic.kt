@@ -9,5 +9,7 @@ enum class EducationalTopic(val displayName: String) {
     DSA("Data Structures & Algorithms"),
     CYBERSECURITY("Cybersecurity"),
     MATHEMATICS("Mathematics"),
-    CLOUD_COMPUTING("Cloud Computing")
+    CLOUD_COMPUTING("Cloud Computing"),
+    SCIENCE_ENGINEERING("Science & Engineering"),
+    ACADEMIC_RESEARCH("Academic & Research")
 }
