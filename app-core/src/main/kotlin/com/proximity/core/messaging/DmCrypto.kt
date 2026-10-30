@@ -28,11 +28,18 @@ import java.time.Instant
 class DmCrypto(private val identity: LocalIdentity) {
 
     /** The signed fields of a new message (without signature). */
-    fun encrypt(toId: String, toEncryptionKey: String, text: String, createdAt: Instant): JsonObject {
+    fun encrypt(toId: String, toEncryptionKey: String, text: String, image: ByteArray?, createdAt: Instant): JsonObject {
         val fromId = identity.currentUser.id
         val createdAtMs = createdAt.toEpochMilli()
         val nonce = randomBytes(NONCE_BYTES)
-        val sealed = cipher(true, key(toEncryptionKey, fromId, toId), nonce, aad(fromId, toId, createdAtMs), text.toByteArray())
+        val clear = kotlinx.serialization.json.Json.encodeToString(
+            JsonObject.serializer(),
+            JsonObject(buildMap {
+                put("text", JsonPrimitive(text))
+                image?.let { put("image", JsonPrimitive(it.toBase64())) }
+            }),
+        ).toByteArray()
+        val sealed = cipher(true, key(toEncryptionKey, fromId, toId), nonce, aad(fromId, toId, createdAtMs), clear)
         return JsonObject(
             mapOf(
                 "fromId" to JsonPrimitive(fromId),
@@ -46,7 +53,9 @@ class DmCrypto(private val identity: LocalIdentity) {
     }
 
     /** Decrypts a message addressed to this user, or null if it was tampered with or not meant for us. */
-    fun decrypt(dm: SignedObject): String? {
+    data class DecryptedMessage(val text: String, val image: ByteArray?)
+
+    fun decrypt(dm: SignedObject): DecryptedMessage? {
         if (dm.str("toId") != identity.currentUser.id) return null
         return try {
             val fromId = dm.str("fromId")
@@ -58,7 +67,11 @@ class DmCrypto(private val identity: LocalIdentity) {
                 aad(fromId, toId, dm.long("createdAt")),
                 dm.str("ciphertext").fromBase64(),
             )
-            String(clear)
+            val parsed = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(String(clear)) as? JsonObject }.getOrNull()
+            if (parsed == null || parsed["text"] == null) DecryptedMessage(String(clear), null) else DecryptedMessage(
+                text = (parsed["text"] as? JsonPrimitive)?.content ?: "",
+                image = (parsed["image"] as? JsonPrimitive)?.content?.fromBase64(),
+            )
         } catch (e: Exception) {
             null
         }

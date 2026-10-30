@@ -91,5 +91,7 @@ internal object Schema {
             "CREATE TABLE tombstones (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL)",
             "CREATE TABLE blocked (user_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL)",
         ),
+        // v2: encrypted chat image bytes stored after decryption for the recipient.
+        listOf("ALTER TABLE direct_messages ADD COLUMN image BLOB"),
     )
 }

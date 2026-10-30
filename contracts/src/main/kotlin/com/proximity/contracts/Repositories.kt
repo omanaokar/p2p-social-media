@@ -47,7 +47,7 @@ interface MessageRepository {
      *
      * @throws IllegalStateException if the recipient's profile has never been seen.
      */
-    suspend fun send(toUserId: String, text: String): ChatMessage
+    suspend fun send(toUserId: String, text: String, image: ByteArray? = null): ChatMessage
     fun watchConversation(peerUserId: String): Flow<List<ChatMessage>>
     fun watchInbox(): Flow<List<Conversation>>
 }

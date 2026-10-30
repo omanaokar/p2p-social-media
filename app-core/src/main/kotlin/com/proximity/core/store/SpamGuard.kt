@@ -42,7 +42,7 @@ class SpamGuard(private val config: AppConfig) {
                 if (obj.str("type").let { it.isEmpty() || it.length > 32 }) Rejection("invalid reaction type") else null
             ObjectKind.DM -> when {
                 // Ciphertext + 16 byte tag; allow 4 UTF-8 bytes per char.
-                base64Bytes(obj.str("ciphertext")) > config.maxMessageChars * 4 + 16 -> Rejection("message too long")
+                base64Bytes(obj.str("ciphertext")) > config.maxMessageChars * 4 + 256 * 1024 -> Rejection("message too long")
                 !HEX_KEY.matches(obj.str("toId")) || !HEX_KEY.matches(obj.str("senderKey")) -> Rejection("malformed message keys")
                 expired(obj, config.dmTtl, now) -> Rejection("expired", permanent = false)
                 else -> null

@@ -46,11 +46,11 @@ class ObjectStore(
      * Stores an object created on this device. Throws [IllegalArgumentException]
      * if it breaks a limit peers would enforce, since it would never spread.
      */
-    fun saveLocal(obj: SignedObject, dmBody: String? = null) {
+    fun saveLocal(obj: SignedObject, dmBody: String? = null, dmImage: ByteArray? = null) {
         val now = clock.now()
         val problem = guard.checkContent(obj, now) ?: guard.checkRate(obj.kind, recentCount(obj, now))
         require(problem == null) { problem!!.reason }
-        val result = store(obj, hopCount = 0, now = now, dmBody = dmBody)
+        val result = store(obj, hopCount = 0, now = now, dmBody = dmBody, dmImage = dmImage)
         check(result.stored) { "Could not store ${obj.kind.wireName}: ${result.reason}" }
     }
 
@@ -80,13 +80,14 @@ class ObjectStore(
         fromUserId: String? = null,
         signal: Int? = null,
         dmBody: String? = null,
+        dmImage: ByteArray? = null,
     ): IngestResult {
         val result = when (obj.kind) {
             ObjectKind.PROFILE -> storeProfile(obj, hopCount, now)
             ObjectKind.POST -> storePost(obj, hopCount, now, fromUserId, signal)
             ObjectKind.COMMENT -> storeComment(obj, hopCount, now)
             ObjectKind.REACTION -> storeReaction(obj, hopCount, now)
-            ObjectKind.DM -> storeDm(obj, hopCount, now, dmBody)
+            ObjectKind.DM -> storeDm(obj, hopCount, now, dmBody, dmImage)
             ObjectKind.RECEIPT -> storeReceipt(obj, hopCount, now)
         }
         if (result.stored) {
@@ -173,22 +174,26 @@ class ObjectStore(
         return IngestResult.stored()
     }
 
-    private fun storeDm(obj: SignedObject, hopCount: Int, now: Instant, localBody: String?): IngestResult {
+    private fun storeDm(obj: SignedObject, hopCount: Int, now: Instant, localBody: String?, localImage: ByteArray?): IngestResult {
         val fromId = obj.signerId
         val toId = obj.str("toId")
         var created = emptyList<SignedObject>()
         val status: String
         var body: String? = null
+        var image: ByteArray? = null
         when {
             fromId == me && localBody != null -> {
                 status = MessageStatus.PENDING.name
                 body = localBody
+                image = localImage
             }
             toId == me -> {
-                body = crypto.decrypt(obj) ?: run {
+                val decrypted = crypto.decrypt(obj) ?: run {
                     tombstone(obj.id, now)
                     return IngestResult.skipped("undecryptable")
                 }
+                body = decrypted.text
+                image = decrypted.image
                 status = MessageStatus.RECEIVED.name
                 created = listOf(
                     SignedObject.create(
@@ -209,10 +214,10 @@ class ObjectStore(
         }
         db.transaction {
             db.execute(
-                """INSERT OR IGNORE INTO direct_messages (id, from_id, to_id, created_at, expires_at, hop_count, raw, body, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT OR IGNORE INTO direct_messages (id, from_id, to_id, created_at, expires_at, hop_count, raw, body, status, image)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 obj.id, fromId, toId, obj.long("createdAt"), obj.timestamp.plus(config.dmTtl).toEpochMilli(), hopCount,
-                obj.encodeRaw(), body, status,
+                obj.encodeRaw(), body, status, image,
             )
             created.forEach { insertReceipt(it, 0) }
         }

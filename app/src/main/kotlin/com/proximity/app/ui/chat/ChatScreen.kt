@@ -1,5 +1,11 @@
 package com.proximity.app.ui.chat
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +27,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
@@ -32,8 +39,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -41,6 +50,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +65,7 @@ import com.proximity.contracts.ChatMessage
 import com.proximity.contracts.Conversation
 import com.proximity.contracts.MessageStatus
 import com.proximity.contracts.PeerProfile
+import java.io.ByteArrayOutputStream
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,6 +74,16 @@ fun ChatScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var pendingImage by remember { mutableStateOf<ByteArray?>(null) }
+    val context = LocalContext.current
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+                ?.let(::compressChatImage)
+        }.onSuccess { bytes -> if (bytes != null) pendingImage = bytes }
+            .onFailure { viewModel.setErrorMessage(it.message ?: "Could not load image") }
+    }
 
     Column(modifier = modifier.fillMaxSize()) {
         ErrorBanner(
@@ -83,9 +105,12 @@ fun ChatScreen(
             ConversationView(
                 peerId = uiState.activePeerId!!,
                 messages = uiState.activeMessages,
+                selectedImage = pendingImage,
+                onPickImage = { imagePicker.launch("image/*") },
+                onClearImage = { pendingImage = null },
                 isSending = uiState.isSending,
                 onBack = { viewModel.closeConversation() },
-                onSendMessage = { text -> viewModel.sendMessage(uiState.activePeerId!!, text) }
+                onSendMessage = { text, image -> viewModel.sendMessage(uiState.activePeerId!!, text, image) }
             )
         }
     }
@@ -229,12 +254,16 @@ fun ConversationItem(
 fun ConversationView(
     peerId: String,
     messages: List<ChatMessage>,
+    selectedImage: ByteArray?,
+    onPickImage: () -> Unit,
+    onClearImage: () -> Unit,
     isSending: Boolean,
     onBack: () -> Unit,
-    onSendMessage: (String) -> Unit,
+    onSendMessage: (String, ByteArray?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var messageInput by remember { mutableStateOf("") }
+    val preview = remember(selectedImage) { selectedImage?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
 
     Column(modifier = modifier.fillMaxSize()) {
         // Conversation Top Bar
@@ -304,12 +333,13 @@ fun ConversationView(
             Spacer(modifier = Modifier.width(8.dp))
             IconButton(
                 onClick = {
-                    if (messageInput.isNotBlank()) {
-                        onSendMessage(messageInput)
+                    if (messageInput.isNotBlank() || selectedImage != null) {
+                        onSendMessage(messageInput, selectedImage)
                         messageInput = ""
+                        onClearImage()
                     }
                 },
-                enabled = messageInput.isNotBlank() && !isSending
+                enabled = (messageInput.isNotBlank() || selectedImage != null) && !isSending
             ) {
                 if (isSending) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp))
@@ -320,6 +350,17 @@ fun ConversationView(
                         tint = if (messageInput.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                     )
                 }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onPickImage, enabled = !isSending) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Text(" Image")
+            }
+            if (preview != null) {
+                Spacer(Modifier.width(8.dp))
+                Image(bitmap = preview, contentDescription = "Selected chat image", modifier = Modifier.size(56.dp))
+                TextButton(onClick = onClearImage) { Text("Remove") }
             }
         }
     }
@@ -346,6 +387,11 @@ fun MessageBubble(
             modifier = Modifier.widthIn(max = 280.dp)
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
+                message.image?.let { bytes ->
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()?.let { bitmap ->
+                        Image(bitmap = bitmap, contentDescription = "Image message", modifier = Modifier.fillMaxWidth().height(200.dp))
+                    }
+                }
                 Text(
                     text = message.text,
                     style = MaterialTheme.typography.bodyLarge,
@@ -394,4 +440,23 @@ fun MessageBubble(
             }
         }
     }
+}
+
+private fun compressChatImage(source: Bitmap): ByteArray {
+    val maxDimension = 1280
+    val scale = minOf(1f, maxDimension.toFloat() / maxOf(source.width, source.height))
+    val resized = if (scale < 1f) Bitmap.createScaledBitmap(source, (source.width * scale).toInt().coerceAtLeast(1), (source.height * scale).toInt().coerceAtLeast(1), true) else source
+    var quality = 82
+    var bytes: ByteArray
+    do {
+        bytes = ByteArrayOutputStream().use { output ->
+            resized.compress(Bitmap.CompressFormat.JPEG, quality, output)
+            output.toByteArray()
+        }
+        quality -= 10
+    } while (bytes.size > 160 * 1024 && quality >= 32)
+    if (resized !== source) resized.recycle()
+    if (source !== resized) source.recycle()
+    require(bytes.size <= 180 * 1024) { "Chat image must compress to 180 KB or less" }
+    return bytes
 }

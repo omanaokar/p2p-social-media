@@ -34,16 +34,17 @@ class MessageRepositoryImpl(
     private val io: CoroutineDispatcher,
 ) : MessageRepository {
 
-    override suspend fun send(toUserId: String, text: String): ChatMessage = withContext(io) {
-        require(text.isNotBlank()) { "Message is empty" }
+    override suspend fun send(toUserId: String, text: String, image: ByteArray?): ChatMessage = withContext(io) {
+        require(text.isNotBlank() || image != null) { "Message is empty" }
         require(toUserId != identity.currentUser.id) { "Cannot message yourself" }
         val recipientKey = db.query("SELECT encryption_key FROM profiles WHERE public_key = ?", toUserId).firstOrNull()
             ?.str("encryption_key")
             ?: throw IllegalStateException("No profile for $toUserId yet; meet them first")
 
-        val fields = crypto.encrypt(toUserId, recipientKey, text, clock.now())
+        require((image?.size ?: 0) <= 180 * 1024) { "Chat image must be 180 KB or smaller" }
+        val fields = crypto.encrypt(toUserId, recipientKey, text, image, clock.now())
         val obj = SignedObject.create(ObjectKind.DM, fields, identity)
-        store.saveLocal(obj, dmBody = text)
+        store.saveLocal(obj, dmBody = text, dmImage = image)
         sync.publish(obj)
         db.query("SELECT * FROM direct_messages WHERE id = ?", obj.id).first().toChatMessage()
     }

@@ -1,6 +1,7 @@
 package com.proximity.app.ui.feed
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -46,6 +48,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.asImageBitmap
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import java.io.ByteArrayOutputStream
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -69,6 +79,16 @@ fun FeedScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showCreateDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+                ?.let(::compressPostImage)
+        }.onSuccess { bytes ->
+            if (bytes != null) viewModel.setSelectedPostImage(bytes)
+        }.onFailure { viewModel.setImageError(it.message ?: "Could not load image") }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -156,11 +176,16 @@ fun FeedScreen(
         if (showCreateDialog) {
             CreatePostDialog(
                 onDismiss = { showCreateDialog = false },
-                onPublish = { text ->
-                    viewModel.createPost(text)
+                onPickImage = { imagePicker.launch("image/*") },
+                onPublish = { text, image ->
+                    viewModel.createPost(text, image)
                     showCreateDialog = false
                 },
-                isPublishing = uiState.isCreatingPost
+                isPublishing = uiState.isCreatingPost,
+                selectedImage = uiState.selectedPostImage,
+                imageError = uiState.imageError,
+                onClearImage = { viewModel.setSelectedPostImage(null) },
+                onClearImageError = { viewModel.setImageError(null) },
             )
         }
     }
@@ -282,6 +307,17 @@ fun PostCard(
                 color = MaterialTheme.colorScheme.onSurface
             )
 
+            post.image?.let { bytes ->
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { bitmap ->
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "Image attached to post",
+                        modifier = Modifier.fillMaxWidth().height(240.dp)
+                    )
+                }
+            }
+
             // Neil's Ranking Rationale Tag
             if (rankedPost.reason.isNotBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -360,10 +396,18 @@ fun PostCard(
 @Composable
 fun CreatePostDialog(
     onDismiss: () -> Unit,
-    onPublish: (String) -> Unit,
-    isPublishing: Boolean
+    onPickImage: () -> Unit,
+    onPublish: (String, ByteArray?) -> Unit,
+    isPublishing: Boolean,
+    selectedImage: ByteArray?,
+    imageError: String?,
+    onClearImage: () -> Unit,
+    onClearImageError: () -> Unit,
 ) {
     var text by remember { mutableStateOf("") }
+    val preview = remember(selectedImage) {
+        selectedImage?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -385,12 +429,25 @@ fun CreatePostDialog(
                         .height(140.dp),
                     shape = RoundedCornerShape(12.dp)
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(onClick = onPickImage, enabled = !isPublishing) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Text(if (selectedImage == null) " Add image" else " Change image")
+                }
+                if (preview != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Image(bitmap = preview, contentDescription = "Selected post image", modifier = Modifier.fillMaxWidth().height(160.dp))
+                    TextButton(onClick = onClearImage, enabled = !isPublishing) { Text("Remove image") }
+                }
+                if (imageError != null) {
+                    TextButton(onClick = onClearImageError) { Text(imageError, color = MaterialTheme.colorScheme.error) }
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onPublish(text) },
-                enabled = text.isNotBlank() && !isPublishing
+                onClick = { onPublish(text, selectedImage) },
+                enabled = (text.isNotBlank() || selectedImage != null) && !isPublishing
             ) {
                 if (isPublishing) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary)
@@ -416,4 +473,28 @@ private fun formatTimeAgo(instant: java.time.Instant): String {
         duration.toHours() < 24 -> "${duration.toHours()}h ago"
         else -> instant.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MMM d"))
     }
+}
+
+private fun compressPostImage(source: Bitmap): ByteArray {
+    val maxDimension = 1280
+    val scale = minOf(1f, maxDimension.toFloat() / maxOf(source.width, source.height))
+    val resized = if (scale < 1f) Bitmap.createScaledBitmap(
+        source,
+        (source.width * scale).toInt().coerceAtLeast(1),
+        (source.height * scale).toInt().coerceAtLeast(1),
+        true,
+    ) else source
+    var quality = 85
+    var bytes: ByteArray
+    do {
+        bytes = ByteArrayOutputStream().use { output ->
+            resized.compress(Bitmap.CompressFormat.JPEG, quality, output)
+            output.toByteArray()
+        }
+        quality -= 10
+    } while (bytes.size > 180 * 1024 && quality >= 35)
+    if (resized !== source) resized.recycle()
+    if (source !== resized) source.recycle()
+    require(bytes.size <= 256 * 1024) { "Image is too large after compression" }
+    return bytes
 }

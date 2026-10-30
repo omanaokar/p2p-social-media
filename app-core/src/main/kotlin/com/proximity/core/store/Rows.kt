@@ -64,4 +64,5 @@ internal fun Row.toChatMessage() = ChatMessage(
     text = optStr("body").orEmpty(),
     createdAt = instant("created_at"),
     status = MessageStatus.valueOf(str("status")),
+    image = blob("image"),
 )

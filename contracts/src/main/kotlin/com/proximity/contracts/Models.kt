@@ -124,6 +124,7 @@ data class ChatMessage(
     val text: String,
     val createdAt: Instant,
     val status: MessageStatus,
+    val image: ByteArray? = null,
 ) {
     val isMine: Boolean get() = status != MessageStatus.RECEIVED
 }

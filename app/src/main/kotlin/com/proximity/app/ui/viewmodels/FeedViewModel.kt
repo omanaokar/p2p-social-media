@@ -30,6 +30,8 @@ data class FeedUiState(
     val searchQuery: String? = null,
     val isCreatingPost: Boolean = false,
     val errorMessage: String? = null,
+    val selectedPostImage: ByteArray? = null,
+    val imageError: String? = null,
 )
 
 /**
@@ -49,6 +51,8 @@ class FeedViewModel(
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+    private val _selectedPostImage = MutableStateFlow<ByteArray?>(null)
+    private val _imageError = MutableStateFlow<String?>(null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val uiState: StateFlow<FeedUiState> = container.core
@@ -56,7 +60,7 @@ class FeedViewModel(
             if (core == null) {
                 flowOf(FeedUiState(isLoading = true))
             } else {
-                combine(
+                val feedState = combine(
                     core.posts.watchFeedCandidates(),
                     _searchQuery,
                     _isCreatingPost,
@@ -87,6 +91,9 @@ class FeedViewModel(
                         errorMessage = error,
                     )
                 }
+                combine(feedState, _selectedPostImage, _imageError) { state, selectedImage, imageError ->
+                    state.copy(selectedPostImage = selectedImage, imageError = imageError)
+                }
             }
         }
         .catch { e ->
@@ -110,8 +117,18 @@ class FeedViewModel(
                 _errorMessage.value = e.message ?: "Failed to create post"
             } finally {
                 _isCreatingPost.value = false
+                _selectedPostImage.value = null
             }
         }
+    }
+
+    fun setSelectedPostImage(image: ByteArray?) {
+        _selectedPostImage.value = image
+        _imageError.value = null
+    }
+
+    fun setImageError(message: String?) {
+        _imageError.value = message
     }
 
     fun deletePost(postId: String) {

@@ -96,14 +96,14 @@ class ChatViewModel(
         _activePeerId.value = null
     }
 
-    fun sendMessage(toUserId: String, text: String) {
+    fun sendMessage(toUserId: String, text: String, image: ByteArray? = null) {
         val core = container.core.value ?: return
-        if (text.isBlank()) return
+        if (text.isBlank() && image == null) return
         viewModelScope.launch {
             _isSending.value = true
             _errorMessage.value = null
             try {
-                core.messages.send(toUserId, text.trim())
+                core.messages.send(toUserId, text.trim(), image)
             } catch (e: Exception) {
                 _errorMessage.value = e.message ?: "Failed to send message"
             } finally {
@@ -114,5 +114,9 @@ class ChatViewModel(
 
     fun clearError() {
         _errorMessage.value = null
+    }
+
+    fun setErrorMessage(message: String?) {
+        _errorMessage.value = message
     }
 }
