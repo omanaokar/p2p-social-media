@@ -18,10 +18,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -60,6 +62,8 @@ enum class AppDestination(val label: String, val icon: ImageVector) {
 @Composable
 fun MainAppScreen(
     container: AppContainer,
+    darkMode: Boolean,
+    onDarkModeChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val factory = remember(container) { ViewModelFactory(container) }
@@ -77,6 +81,10 @@ fun MainAppScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surface,
+                ),
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -115,17 +123,26 @@ fun MainAppScreen(
                             }
                         }
                     }
-                }
+                },
             )
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface,
+                tonalElevation = 0.dp,
+            ) {
                 AppDestination.entries.forEach { destination ->
                     NavigationBarItem(
                         selected = currentDestination == destination,
                         onClick = { currentDestination = destination },
-                        icon = { Icon(imageVector = destination.icon, contentDescription = destination.label) },
-                        label = { Text(destination.label) }
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
+                        icon = { Icon(imageVector = destination.icon, contentDescription = destination.label) }
                     )
                 }
             }
@@ -150,7 +167,11 @@ fun MainAppScreen(
                     MeshScreen(viewModel = meshViewModel)
                 }
                 AppDestination.PROFILE -> {
-                    ProfileScreen(viewModel = profileViewModel)
+                    ProfileScreen(
+                        viewModel = profileViewModel,
+                        darkMode = darkMode,
+                        onDarkModeChange = onDarkModeChange,
+                    )
                 }
             }
 

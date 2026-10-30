@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -33,11 +34,13 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -49,6 +52,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -64,7 +69,6 @@ import androidx.compose.ui.unit.sp
 import com.proximity.app.ui.components.AvatarBadge
 import com.proximity.app.ui.components.EmptyStateView
 import com.proximity.app.ui.components.ErrorBanner
-import com.proximity.app.ui.components.SignalIndicator
 import com.proximity.app.ui.viewmodels.FeedViewModel
 import com.proximity.contracts.InteractionType
 import com.proximity.contracts.RankedPost
@@ -95,6 +99,7 @@ fun FeedScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { showCreateDialog = true },
+                shape = CircleShape,
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary
             ) {
@@ -144,7 +149,7 @@ fun FeedScreen(
                     else -> {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            verticalArrangement = Arrangement.spacedBy(0.dp)
                         ) {
                             items(uiState.posts, key = { it.candidate.post.id }) { rankedPost ->
                                 PostCard(
@@ -213,7 +218,13 @@ fun FeedSearchBar(
             }
         },
         singleLine = true,
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+            focusedBorderColor = MaterialTheme.colorScheme.primary,
+            unfocusedBorderColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -235,39 +246,33 @@ fun PostCard(
 
     Card(
         modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(16.dp),
+            .fillMaxWidth(),
+        shape = RoundedCornerShape(0.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             // Author info & Signal Indicator
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                AvatarBadge(name = candidate.author?.displayName ?: "Nearby Peer")
+                AvatarBadge(name = candidate.author?.displayName ?: "Nearby Peer", size = 44.dp)
                 Spacer(modifier = Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = candidate.author?.displayName ?: "Peer",
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = formatTimeAgo(post.createdAt),
+                        text = "@${post.authorId.take(10)} · ${formatTimeAgo(post.createdAt)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-
-                SignalIndicator(
-                    rssi = candidate.receivedSignalStrength,
-                    hopCount = post.hopCount
-                )
 
                 Box {
                     IconButton(onClick = { menuExpanded = true }) {
@@ -298,7 +303,7 @@ fun PostCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Post Body
             Text(
@@ -313,7 +318,8 @@ fun PostCard(
                     Image(
                         bitmap = bitmap.asImageBitmap(),
                         contentDescription = "Image attached to post",
-                        modifier = Modifier.fillMaxWidth().height(240.dp)
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(16.dp))
                     )
                 }
             }
@@ -335,11 +341,12 @@ fun PostCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Bottom Actions (React & Comments)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 // Like Button
@@ -350,7 +357,7 @@ fun PostCard(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .clickable { onReact() }
-                        .padding(vertical = 4.dp, horizontal = 8.dp)
+                        .padding(vertical = 4.dp, horizontal = 4.dp)
                 ) {
                     Icon(
                         imageVector = if (isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
@@ -360,20 +367,18 @@ fun PostCard(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = if (totalLikes > 0) "$totalLikes" else "Like",
+                        text = if (totalLikes > 0) "$totalLikes" else "",
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (isLiked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-
-                Spacer(modifier = Modifier.width(16.dp))
 
                 // Comments Button
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .clickable { onOpenComments() }
-                        .padding(vertical = 4.dp, horizontal = 8.dp)
+                        .padding(vertical = 4.dp, horizontal = 4.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Email,
@@ -383,13 +388,14 @@ fun PostCard(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = if (candidate.commentCount > 0) "${candidate.commentCount}" else "Comment",
+                        text = if (candidate.commentCount > 0) "${candidate.commentCount}" else "",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
     }
 }
 

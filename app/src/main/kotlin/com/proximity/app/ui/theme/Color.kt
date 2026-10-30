@@ -3,10 +3,10 @@ package com.proximity.app.ui.theme
 import androidx.compose.ui.graphics.Color
 
 // Proximity Modern Blue/Cyan Mesh Palette
-val PrimaryBlue = Color(0xFF006494)
+val PrimaryBlue = Color(0xFF1D9BF0)
 val OnPrimaryBlue = Color(0xFFFFFFFF)
-val PrimaryContainerBlue = Color(0xFFCBE6FF)
-val OnPrimaryContainerBlue = Color(0xFF001E30)
+val PrimaryContainerBlue = Color(0xFFE8F5FD)
+val OnPrimaryContainerBlue = Color(0xFF0F1419)
 
 val SecondaryCyan = Color(0xFF006874)
 val OnSecondaryCyan = Color(0xFFFFFFFF)
@@ -18,15 +18,15 @@ val OnTertiaryIndigo = Color(0xFFFFFFFF)
 val TertiaryContainerIndigo = Color(0xFFDFE0FF)
 val OnTertiaryContainerIndigo = Color(0xFF000C62)
 
-val BackgroundLight = Color(0xFFF6FAFE)
-val OnBackgroundLight = Color(0xFF171C1F)
-val SurfaceLight = Color(0xFFF6FAFE)
-val OnSurfaceLight = Color(0xFF171C1F)
-val SurfaceVariantLight = Color(0xFFDDE3EA)
-val OnSurfaceVariantLight = Color(0xFF41474D)
+val BackgroundLight = Color(0xFFFFFFFF)
+val OnBackgroundLight = Color(0xFF0F1419)
+val SurfaceLight = Color(0xFFFFFFFF)
+val OnSurfaceLight = Color(0xFF0F1419)
+val SurfaceVariantLight = Color(0xFFEFF3F4)
+val OnSurfaceVariantLight = Color(0xFF536471)
 
-val OutlineLight = Color(0xFF71787E)
-val OutlineVariantLight = Color(0xFFC1C7CE)
+val OutlineLight = Color(0xFF536471)
+val OutlineVariantLight = Color(0xFFCFD9DE)
 
 // Signal Tier Colors
 val SignalImmediate = Color(0xFF00897B) // Close / high RSSI

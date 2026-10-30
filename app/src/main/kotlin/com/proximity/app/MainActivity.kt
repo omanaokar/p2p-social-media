@@ -5,6 +5,11 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
@@ -30,9 +35,20 @@ class MainActivity : ComponentActivity() {
         val container = (application as ProximityApp).container
 
         setContent {
-            ProximityTheme {
+            val preferences = remember { getSharedPreferences("proximity_app_settings", MODE_PRIVATE) }
+            var darkMode by rememberSaveable {
+                mutableStateOf(preferences.getBoolean("dark_mode", false))
+            }
+            ProximityTheme(darkTheme = darkMode) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    MainAppScreen(container = container)
+                    MainAppScreen(
+                        container = container,
+                        darkMode = darkMode,
+                        onDarkModeChange = { enabled ->
+                            darkMode = enabled
+                            preferences.edit().putBoolean("dark_mode", enabled).apply()
+                        },
+                    )
                 }
             }
         }
