@@ -132,7 +132,7 @@ class LocalRanker(
                     val isPrimaryMatch = classification.primaryTopic != null && classification.primaryTopic in selectedTopics
                     if (isPrimaryMatch) 1.0 else 0.7
                 } else {
-                    0.0
+                    0.5 // Neutral baseline across all educational topics for cold-start users
                 }
             } else {
                 // Learned profile: highest interest score across the post's topics
@@ -143,7 +143,7 @@ class LocalRanker(
                 } else {
                     emptySet()
                 }
-                relevantTopics.maxOfOrNull { userProfile.getInterestScore(it) } ?: 0.0
+                relevantTopics.maxOfOrNull { userProfile.getInterestScore(it) } ?: 0.5
             }
 
             // Composite score
@@ -159,7 +159,7 @@ class LocalRanker(
             val reason = buildString {
                 if (classification.category == PrimaryCategory.EDUCATIONAL && classification.primaryTopic != null) {
                     append(classification.primaryTopic.displayName)
-                    if (matchedPreferences.isNotEmpty()) {
+                    if (matchedPreferences.isNotEmpty() || (!userProfile.isColdStart && userProfile.getInterestScore(classification.primaryTopic) > 0.6)) {
                         append(" (preferred topic)")
                     }
                     append(" • ")

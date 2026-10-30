@@ -277,4 +277,49 @@ class RecommendationSystemIntegrationTest {
         assertEquals(1, recommendations.size)
         assertEquals("unseen-post", recommendations.first().candidate.post.id)
     }
+
+    @Test
+    fun `interactions dynamically adapt post ranking based on persistent user interest profile`() = runBlocking {
+        val tempDir = java.nio.file.Files.createTempDirectory("rec_sys_test").toFile()
+        val profileFile = java.io.File(tempDir, "user_profile.txt")
+
+        try {
+            val persistentStore = com.proximity.ranker.profile.FileUserInterestProfileStore(profileFile)
+            val system = RecommendationSystem(profileStore = persistentStore)
+
+            val dsaCandidate = candidate("p-dsa", "Binary search tree recursion and algorithmic complexity.")
+            val mathCandidate = candidate("p-math", "Differential calculus and continuous functions.")
+
+            // 1. Initial state (cold-start): both topics are scored neutrally
+            val initialRank = system.rankFeed(listOf(dsaCandidate, mathCandidate), RankContext(now, "me"))
+            assertEquals(2, initialRank.size)
+
+            // 2. User likes and comments on DSA post
+            system.recordFeedInteraction("p-dsa", InteractionType.REACT)
+            system.recordFeedInteraction("p-dsa", InteractionType.COMMENT)
+
+            // 3. User hides Math post
+            system.recordFeedInteraction("p-math", InteractionType.HIDE)
+
+            // Verify persistent profile was updated
+            val profile = persistentStore.getProfile()
+            assertTrue(profile.getInterestScore(EducationalTopic.DSA) > profile.getInterestScore(EducationalTopic.MATHEMATICS))
+
+            // 4. Feed Ranking now prioritizes DSA over Math
+            val adaptedRank = system.rankFeed(listOf(mathCandidate, dsaCandidate), RankContext(now, "me"))
+            assertEquals("p-dsa", adaptedRank[0].candidate.post.id)
+            assertTrue(adaptedRank[0].score > adaptedRank[1].score)
+            assertTrue(adaptedRank[0].reason.contains("preferred topic"))
+
+            // 5. Verify persistence across app restart (recreating system with existing file store)
+            val restartedStore = com.proximity.ranker.profile.FileUserInterestProfileStore(profileFile)
+            val restartedSystem = RecommendationSystem(profileStore = restartedStore)
+            val restartedRank = restartedSystem.rankFeed(listOf(mathCandidate, dsaCandidate), RankContext(now, "me"))
+
+            assertEquals("p-dsa", restartedRank[0].candidate.post.id)
+            assertTrue(restartedRank[0].score > restartedRank[1].score)
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
 }
