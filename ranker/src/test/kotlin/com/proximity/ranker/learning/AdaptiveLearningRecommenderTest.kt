@@ -296,4 +296,27 @@ class AdaptiveLearningRecommenderTest {
         assertEquals(EducationalTopic.DSA, cohort.topic)
         assertEquals(1, cohort.members.size)
     }
+
+    @Test
+    fun `repeated interactions apply damping preventing score inflation`() {
+        val post = candidate("dsa-1", "Binary search tree implementation and balancing.").post
+        val initialScore = profileStore.getProfile().getInterestScore(EducationalTopic.DSA)
+
+        // Multiple consecutive reactions
+        repeat(5) {
+            recommender.recordInteraction(post, InteractionType.REACT)
+        }
+
+        val profile = profileStore.getProfile()
+        val score = profile.getInterestScore(EducationalTopic.DSA)
+        val count = profile.interactionCounts[EducationalTopic.DSA] ?: 0
+
+        assertEquals(5, count)
+        assertTrue(score in 0.5..1.0, "Score must stay safely bounded within [0.0, 1.0]")
+        // Next interaction delta should be smaller than initial base delta
+        val scoreBefore = score
+        recommender.recordInteraction(post, InteractionType.REACT)
+        val incrementalGain = profileStore.getProfile().getInterestScore(EducationalTopic.DSA) - scoreBefore
+        assertTrue(incrementalGain < 0.15, "Gain must diminish with repeat interactions ($incrementalGain < 0.15)")
+    }
 }

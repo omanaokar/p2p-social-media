@@ -239,14 +239,20 @@ class FileUserInterestProfileStore(
  * - Save: +0.20
  * - Comment: +0.25
  * - Open / Read: +0.08
+ * - Dwell (extended reading): +0.05
  * - Hide: -0.30
+ *
+ * Diminishing returns:
+ * To avoid uncontrolled score inflation from repeated interactions on the same topic,
+ * positive deltas are scaled down by the count of prior interactions:
+ * deltaEffective = delta / (1.0 + 0.10 * priorCount)
  */
 internal fun computeUpdatedProfile(
     current: UserInterestProfile,
     topics: Set<EducationalTopic>,
     type: InteractionType
 ): UserInterestProfile {
-    val delta = when (type) {
+    val baseDelta = when (type) {
         InteractionType.REACT -> 0.15
         InteractionType.COMMENT -> 0.25
         InteractionType.OPEN -> 0.08
@@ -259,9 +265,19 @@ internal fun computeUpdatedProfile(
 
     for (topic in topics) {
         val existingScore = updatedScores[topic] ?: if (topic in current.selectedTopics) 0.70 else 0.50
-        val newScore = (existingScore + delta).coerceIn(0.0, 1.0)
+        val priorCount = updatedCounts[topic] ?: 0
+
+        val effectiveDelta = if (baseDelta > 0) {
+            // Logarithmic/damping scaling to prevent uncontrolled inflation
+            baseDelta / (1.0 + (0.10 * priorCount))
+        } else {
+            // Immediate, un-damped negative penalty on hide
+            baseDelta
+        }
+
+        val newScore = (existingScore + effectiveDelta).coerceIn(0.0, 1.0)
         updatedScores[topic] = newScore
-        updatedCounts[topic] = (updatedCounts[topic] ?: 0) + 1
+        updatedCounts[topic] = priorCount + 1
     }
 
     return current.copy(

@@ -135,7 +135,7 @@ class LocalRanker(
                     0.5 // Neutral baseline across all educational topics for cold-start users
                 }
             } else {
-                // Learned profile: highest interest score across the post's topics
+                // Learned profile: combine continuous topic interest score with adaptive learning status
                 val relevantTopics = if (classification.educationalTopics.isNotEmpty()) {
                     classification.educationalTopics
                 } else if (classification.primaryTopic != null) {
@@ -143,7 +143,18 @@ class LocalRanker(
                 } else {
                     emptySet()
                 }
-                relevantTopics.maxOfOrNull { userProfile.getInterestScore(it) } ?: 0.5
+                
+                val bestTopicScore = relevantTopics.maxOfOrNull { userProfile.getInterestScore(it) } ?: 0.5
+                
+                // If adaptive recommender is available, incorporate underexplored exploration bonus
+                val explorationBonus = if (adaptiveRecommender != null && classification.primaryTopic != null) {
+                    val eng = adaptiveRecommender.getTopicEngagement(classification.primaryTopic)
+                    // Boost underexplored topics slightly so users discover new curriculum areas
+                    if (eng.totalInteractions == 0 && classification.primaryTopic in selectedTopics) 0.15 else 0.0
+                } else {
+                    0.0
+                }
+                (bestTopicScore + explorationBonus).coerceIn(0.0, 1.0)
             }
 
             // Composite score
