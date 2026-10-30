@@ -40,17 +40,13 @@ object NearbyPermissions {
             permissions.add(PERMISSION_BLUETOOTH_SCAN)
             permissions.add(PERMISSION_BLUETOOTH_ADVERTISE)
             permissions.add(PERMISSION_BLUETOOTH_CONNECT)
-
-            if (sdkInt >= 33) {
-                // Wi-Fi Direct and Notifications for Android 13+
-                permissions.add(PERMISSION_NEARBY_WIFI_DEVICES)
-                permissions.add(PERMISSION_POST_NOTIFICATIONS)
-            }
-        } else {
-            // Android 6 - 11 require Location permission to scan for BLE and Wi-Fi Direct
-            permissions.add(PERMISSION_ACCESS_FINE_LOCATION)
-            permissions.add(PERMISSION_ACCESS_COARSE_LOCATION)
         }
+
+        // Nearby Connections requires location on Android 10-12, and the
+        // nearby Wi-Fi runtime permission starting with Android 12L.
+        if (sdkInt in 29..31) permissions.add(PERMISSION_ACCESS_FINE_LOCATION)
+        if (sdkInt <= 28) permissions.add(PERMISSION_ACCESS_COARSE_LOCATION)
+        if (sdkInt >= 32) permissions.add(PERMISSION_NEARBY_WIFI_DEVICES)
 
         return permissions
     }

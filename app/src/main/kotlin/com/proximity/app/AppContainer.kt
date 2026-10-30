@@ -86,18 +86,30 @@ class AppContainer(
         }
         currentTransport = activeTransport
 
-        val dbPath = context.getDatabasePath("proximity.db").path
-        val newCore = AppCore.open(
-            transport = activeTransport,
-            keyStore = keyStore,
-            driver = BundledSQLiteDriver(),
-            databasePath = dbPath,
-            config = AppConfig(),
-        )
+        val newCore = try {
+            AppCore.open(
+                transport = activeTransport,
+                keyStore = keyStore,
+                driver = BundledSQLiteDriver(),
+                databasePath = context.getDatabasePath("proximity.db").path,
+                config = AppConfig(),
+            )
+        } catch (failure: Exception) {
+            currentTransport = null
+            throw failure
+        }
 
-        activeTransport.start()
-        newCore.start()
-        _core.value = newCore
+        try {
+            // AppCore.SyncEngine subscribes to peer events before it starts the
+            // transport. Starting the driver here first could miss an early
+            // connection event and leave the phones connected but unsynced.
+            newCore.start()
+            _core.value = newCore
+        } catch (failure: Exception) {
+            runCatching { newCore.close() }
+            currentTransport = null
+            throw failure
+        }
     }
 
     suspend fun stop() = mutex.withLock {

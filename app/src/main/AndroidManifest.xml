@@ -8,9 +8,10 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- Android 13+ (API 33+) Nearby Wi-Fi and Notifications -->
+    <!-- Android 12L+ (API 32+) Nearby Wi-Fi and Android 13+ notifications -->
     <uses-permission
         android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:minSdkVersion="32"
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -18,7 +19,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
-    <!-- Legacy permissions for Android 6.0 to 11 (API 23 to 30) -->
+    <!-- Legacy Bluetooth and location permissions -->
     <uses-permission
         android:name="android.permission.BLUETOOTH"
         android:maxSdkVersion="30" />
@@ -27,10 +28,12 @@
         android:maxSdkVersion="30" />
     <uses-permission
         android:name="android.permission.ACCESS_FINE_LOCATION"
-        android:maxSdkVersion="30" />
+        android:minSdkVersion="29"
+        android:maxSdkVersion="31" />
     <uses-permission
         android:name="android.permission.ACCESS_COARSE_LOCATION"
-        android:maxSdkVersion="30" />
+        android:maxSdkVersion="28" />
+    <!-- Nearby Connections checks these manifest permissions on current Android releases too. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 

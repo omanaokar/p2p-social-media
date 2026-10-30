@@ -55,6 +55,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.graphics)
@@ -62,6 +63,7 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.icons.core)
     implementation(libs.sqlite.bundled)
+    implementation(libs.play.services.nearby)
 
     testImplementation(kotlin("test"))
     testImplementation(libs.coroutines.test)
