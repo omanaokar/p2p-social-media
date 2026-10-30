@@ -65,7 +65,8 @@ class LocalRanker(
     override suspend fun rank(candidates: List<FeedCandidate>, context: RankContext): List<RankedPost> {
         if (candidates.isEmpty()) return emptyList()
 
-        val selectedTopics = profileStore.getProfile().selectedTopics
+        val userProfile = profileStore.getProfile()
+        val selectedTopics = userProfile.selectedTopics
 
         return candidates.mapNotNull { candidate ->
             val post = candidate.post
@@ -118,19 +119,31 @@ class LocalRanker(
                 ConfidenceLevel.UNCERTAIN -> 0.0
             }
 
-            // 7. Topic Preference Score (Cold-start interest alignment)
-            // Checks if any detected educational topic in the post matches the user's selected interests
+            // 7. Topic Preference Score (Cold-start interest alignment and learned topic scores)
+            // Checks if any detected educational topic in the post matches the user's selected interests or learned profile
             val matchedPreferences = if (selectedTopics.isNotEmpty()) {
                 classification.educationalTopics.intersect(selectedTopics)
             } else {
                 emptySet()
             }
 
-            val preferenceScore = if (matchedPreferences.isNotEmpty()) {
-                val isPrimaryMatch = classification.primaryTopic != null && classification.primaryTopic in selectedTopics
-                if (isPrimaryMatch) 1.0 else 0.7
+            val preferenceScore = if (userProfile.isColdStart) {
+                if (matchedPreferences.isNotEmpty()) {
+                    val isPrimaryMatch = classification.primaryTopic != null && classification.primaryTopic in selectedTopics
+                    if (isPrimaryMatch) 1.0 else 0.7
+                } else {
+                    0.0
+                }
             } else {
-                0.0
+                // Learned profile: highest interest score across the post's topics
+                val relevantTopics = if (classification.educationalTopics.isNotEmpty()) {
+                    classification.educationalTopics
+                } else if (classification.primaryTopic != null) {
+                    setOf(classification.primaryTopic)
+                } else {
+                    emptySet()
+                }
+                relevantTopics.maxOfOrNull { userProfile.getInterestScore(it) } ?: 0.0
             }
 
             // Composite score
@@ -196,8 +209,13 @@ class LocalRanker(
             }
         }
 
-        if (post != null && adaptiveRecommender != null) {
-            adaptiveRecommender.recordInteraction(post, type, dwell)
+        if (post != null) {
+            if (adaptiveRecommender != null) {
+                adaptiveRecommender.recordInteraction(post, type, dwell)
+            } else {
+                val classification = classifier.classify(post.body)
+                profileStore.recordInteraction(post, type, classification)
+            }
         }
     }
 

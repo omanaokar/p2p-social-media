@@ -1,19 +1,53 @@
 package com.proximity.ranker.profile
 
+import com.proximity.contracts.InteractionType
+import com.proximity.contracts.Post
+import com.proximity.ranker.classifier.ClassificationResult
 import com.proximity.ranker.classifier.EducationalTopic
+import com.proximity.ranker.classifier.PrimaryCategory
+import com.proximity.ranker.classifier.TextContentClassifier
 import com.proximity.ranker.studygroup.StudyGoal
 import java.io.File
+import kotlin.math.roundToInt
 
 /**
- * User's cold-start and ongoing interest profile.
+ * User's cold-start, explicit, and learned interest profile.
  *
  * @param selectedTopics The set of educational topics explicitly selected by the user.
  * @param studyGoals The set of compatible study goals selected by the user.
+ * @param topicScores Persistent continuous interest scores per [EducationalTopic], normalized in [0.0, 1.0].
+ * @param interactionCounts Total tracked user interactions across all topics.
  */
 data class UserInterestProfile(
     val selectedTopics: Set<EducationalTopic> = emptySet(),
-    val studyGoals: Set<StudyGoal> = emptySet()
-)
+    val studyGoals: Set<StudyGoal> = emptySet(),
+    val topicScores: Map<EducationalTopic, Double> = emptyMap(),
+    val interactionCounts: Map<EducationalTopic, Int> = emptyMap()
+) {
+    /**
+     * Returns true if the user has no declared topics and no recorded topic interaction history.
+     */
+    val isColdStart: Boolean get() = selectedTopics.isEmpty() && topicScores.isEmpty()
+
+    /**
+     * Retrieves the interest score for a topic in [0.0, 1.0].
+     * - For new users (cold start), returns a neutral score (0.50).
+     * - If scores exist for the user:
+     *   - returns recorded score if present,
+     *   - if explicitly selected but no score recorded, defaults to high interest (0.80),
+     *   - otherwise falls back to a neutral baseline (0.10).
+     */
+    fun getInterestScore(topic: EducationalTopic): Double {
+        if (isColdStart) return COLD_START_NEUTRAL_SCORE
+        val score = topicScores[topic]
+        if (score != null) return score
+        return if (topic in selectedTopics) 0.80 else 0.10
+    }
+
+    companion object {
+        const val COLD_START_NEUTRAL_SCORE = 0.50
+    }
+}
 
 /**
  * Repository/store for reading and updating the user's educational interest profile.
@@ -23,6 +57,7 @@ interface UserInterestProfileStore {
     fun updateProfile(profile: UserInterestProfile)
     fun updateSelectedTopics(topics: Set<EducationalTopic>)
     fun updateStudyGoals(goals: Set<StudyGoal>)
+    fun recordInteraction(post: Post, type: InteractionType, classification: ClassificationResult)
 }
 
 /**
@@ -48,13 +83,27 @@ class InMemoryUserInterestProfileStore(
     override fun updateStudyGoals(goals: Set<StudyGoal>) {
         currentProfile = currentProfile.copy(studyGoals = goals)
     }
+
+    override fun recordInteraction(post: Post, type: InteractionType, classification: ClassificationResult) {
+        if (classification.category != PrimaryCategory.EDUCATIONAL) return
+        val topics = classification.educationalTopics
+        if (topics.isEmpty()) return
+
+        synchronized(this) {
+            currentProfile = computeUpdatedProfile(currentProfile, topics, type)
+        }
+    }
 }
 
 /**
- * Simple file-backed persistence for [UserInterestProfile] using pure Kotlin/JVM file I/O.
- * Persists selected topics as comma-separated enum names on line 1,
- * and optional study goals on line 2.
- * Falls back safely to empty profile if the file does not exist or is corrupted.
+ * File-backed persistence for [UserInterestProfile] using pure Kotlin/JVM file I/O.
+ *
+ * File structure:
+ * Line 1: Comma-separated enum names for selected topics.
+ * Line 2: Comma-separated enum names for study goals.
+ * Line 3+: Topic scores and counts formatted as "TOPIC_NAME=score:count".
+ *
+ * Automatically falls back to neutral/cold-start profile if the file does not exist or is corrupted.
  */
 class FileUserInterestProfileStore(
     private val storageFile: File
@@ -66,16 +115,38 @@ class FileUserInterestProfileStore(
     override fun getProfile(): UserInterestProfile = cachedProfile
 
     override fun updateProfile(profile: UserInterestProfile) {
-        cachedProfile = profile
-        saveToFile(profile)
+        synchronized(this) {
+            cachedProfile = profile
+            saveToFile(profile)
+        }
     }
 
     override fun updateSelectedTopics(topics: Set<EducationalTopic>) {
-        updateProfile(cachedProfile.copy(selectedTopics = topics))
+        synchronized(this) {
+            val updated = cachedProfile.copy(selectedTopics = topics)
+            cachedProfile = updated
+            saveToFile(updated)
+        }
     }
 
     override fun updateStudyGoals(goals: Set<StudyGoal>) {
-        updateProfile(cachedProfile.copy(studyGoals = goals))
+        synchronized(this) {
+            val updated = cachedProfile.copy(studyGoals = goals)
+            cachedProfile = updated
+            saveToFile(updated)
+        }
+    }
+
+    override fun recordInteraction(post: Post, type: InteractionType, classification: ClassificationResult) {
+        if (classification.category != PrimaryCategory.EDUCATIONAL) return
+        val topics = classification.educationalTopics
+        if (topics.isEmpty()) return
+
+        synchronized(this) {
+            val updated = computeUpdatedProfile(cachedProfile, topics, type)
+            cachedProfile = updated
+            saveToFile(updated)
+        }
     }
 
     private fun loadFromFile(): UserInterestProfile {
@@ -87,9 +158,34 @@ class FileUserInterestProfileStore(
             } else {
                 val topics = lines.getOrNull(0)?.let { parseTopics(it) } ?: emptySet()
                 val goals = lines.getOrNull(1)?.let { parseGoals(it) } ?: emptySet()
-                UserInterestProfile(selectedTopics = topics, studyGoals = goals)
+                val scores = mutableMapOf<EducationalTopic, Double>()
+                val counts = mutableMapOf<EducationalTopic, Int>()
+
+                for (i in 2 until lines.size) {
+                    val line = lines[i]
+                    val parts = line.split("=")
+                    if (parts.size == 2) {
+                        val topic = runCatching { EducationalTopic.valueOf(parts[0].trim()) }.getOrNull()
+                        if (topic != null) {
+                            val dataParts = parts[1].split(":")
+                            val score = dataParts.getOrNull(0)?.toDoubleOrNull()
+                            val count = dataParts.getOrNull(1)?.toIntOrNull() ?: 1
+                            if (score != null) {
+                                scores[topic] = score.coerceIn(0.0, 1.0)
+                                counts[topic] = count
+                            }
+                        }
+                    }
+                }
+
+                UserInterestProfile(
+                    selectedTopics = topics,
+                    studyGoals = goals,
+                    topicScores = scores,
+                    interactionCounts = counts
+                )
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             UserInterestProfile()
         }
     }
@@ -97,11 +193,7 @@ class FileUserInterestProfileStore(
     private fun parseTopics(line: String): Set<EducationalTopic> {
         return line.split(",")
             .mapNotNull { name ->
-                try {
-                    EducationalTopic.valueOf(name.trim())
-                } catch (e: IllegalArgumentException) {
-                    null
-                }
+                runCatching { EducationalTopic.valueOf(name.trim()) }.getOrNull()
             }
             .toSet()
     }
@@ -109,11 +201,7 @@ class FileUserInterestProfileStore(
     private fun parseGoals(line: String): Set<StudyGoal> {
         return line.split(",")
             .mapNotNull { name ->
-                try {
-                    StudyGoal.valueOf(name.trim())
-                } catch (e: IllegalArgumentException) {
-                    null
-                }
+                runCatching { StudyGoal.valueOf(name.trim()) }.getOrNull()
             }
             .toSet()
     }
@@ -123,9 +211,61 @@ class FileUserInterestProfileStore(
             storageFile.parentFile?.mkdirs()
             val topics = profile.selectedTopics.joinToString(",") { it.name }
             val goals = profile.studyGoals.joinToString(",") { it.name }
-            storageFile.writeText("$topics\n$goals")
+            val scoreLines = profile.topicScores.map { (topic, score) ->
+                val count = profile.interactionCounts[topic] ?: 1
+                // 3 decimal precision
+                val roundedScore = ((score * 1000.0).roundToInt()) / 1000.0
+                "${topic.name}=$roundedScore:$count"
+            }
+            val content = buildString {
+                appendLine(topics)
+                appendLine(goals)
+                for (sl in scoreLines) {
+                    appendLine(sl)
+                }
+            }
+            storageFile.writeText(content)
         } catch (_: Exception) {
             // Keep memory cache intact even if disk write fails
         }
     }
+}
+
+/**
+ * Calculates updated [UserInterestProfile] following interaction signals.
+ *
+ * Interaction weights:
+ * - Like / React: +0.15
+ * - Save: +0.20
+ * - Comment: +0.25
+ * - Open / Read: +0.08
+ * - Hide: -0.30
+ */
+internal fun computeUpdatedProfile(
+    current: UserInterestProfile,
+    topics: Set<EducationalTopic>,
+    type: InteractionType
+): UserInterestProfile {
+    val delta = when (type) {
+        InteractionType.REACT -> 0.15
+        InteractionType.COMMENT -> 0.25
+        InteractionType.OPEN -> 0.08
+        InteractionType.DWELL -> 0.05
+        InteractionType.HIDE -> -0.30
+    }
+
+    val updatedScores = current.topicScores.toMutableMap()
+    val updatedCounts = current.interactionCounts.toMutableMap()
+
+    for (topic in topics) {
+        val existingScore = updatedScores[topic] ?: if (topic in current.selectedTopics) 0.70 else 0.50
+        val newScore = (existingScore + delta).coerceIn(0.0, 1.0)
+        updatedScores[topic] = newScore
+        updatedCounts[topic] = (updatedCounts[topic] ?: 0) + 1
+    }
+
+    return current.copy(
+        topicScores = updatedScores,
+        interactionCounts = updatedCounts
+    )
 }

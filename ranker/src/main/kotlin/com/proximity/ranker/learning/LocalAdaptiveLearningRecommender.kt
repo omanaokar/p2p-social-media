@@ -46,6 +46,9 @@ class LocalAdaptiveLearningRecommender(
         val classification = classifier.classify(post.body)
         if (classification.category != PrimaryCategory.EDUCATIONAL) return
 
+        // Update persistent profileStore topic scores
+        profileStore.recordInteraction(post, type, classification)
+
         val topics = classification.educationalTopics
         if (topics.isEmpty()) return
 
