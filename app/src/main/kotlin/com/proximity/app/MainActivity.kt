@@ -31,6 +31,9 @@ class MainActivity : Activity() {
     private lateinit var title: TextView
     private lateinit var stream: LinearLayout
     private lateinit var nav: LinearLayout
+    private lateinit var fab: ImageView
+    private lateinit var topAvatar: FrameLayout
+    private var composeRefresh: (() -> Unit)? = null
     private var pendingImage: ByteArray? = null
     private var pendingProfileAvatar: ByteArray? = null
     private var myProfile: Profile? = null
@@ -65,7 +68,7 @@ class MainActivity : Activity() {
                 nearbyTransport = transport
                 val opened = AppCore.open(transport, PreferenceKeyStore(preferences), BundledSQLiteDriver(), getDatabasePath("proximity.db").path)
                 opened.start(); myProfile = opened.profiles.watchMyProfile().first(); core = opened
-                scope.launch { opened.profiles.watchMyProfile().collect { myProfile = it } }
+                scope.launch { opened.profiles.watchMyProfile().collect { myProfile = it; updateTopAvatar() } }
                 messageNotificationJob = scope.launch { watchIncomingMessageNotifications(opened) }
                 withContext(Dispatchers.Main) { home() }
             } catch (error: Throwable) { withContext(Dispatchers.Main) { errorState(error) }
@@ -75,83 +78,134 @@ class MainActivity : Activity() {
 
     private fun shell() = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL; setBackgroundColor(BLACK)
+        setOnApplyWindowInsetsListener { v, insets ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            } else {
+                v.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
+            }
+            insets
+        }
         addView(topBar())
-        addView(ScrollView(this@MainActivity).apply {
-            isFillViewport = true
-            addView(LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; stream = this })
+        addView(FrameLayout(this@MainActivity).apply {
             layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
+            addView(ScrollView(this@MainActivity).apply {
+                isFillViewport = true
+                addView(LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; stream = this })
+            }, FrameLayout.LayoutParams(-1, -1))
+            fab = ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_add); setColorFilter(Color.WHITE); scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(dp(16), dp(16), dp(16), dp(16)); background = round(ACCENT, 28); elevation = dp(6).toFloat()
+                contentDescription = "Create post"; setOnClickListener { compose() }
+            }
+            addView(fab, FrameLayout.LayoutParams(dp(56), dp(56), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(16), dp(16)) })
         })
-        nav = LinearLayout(this@MainActivity).apply { gravity = Gravity.CENTER; orientation = LinearLayout.HORIZONTAL; setPadding(dp(8), dp(5), dp(8), dp(8)); setBackgroundColor(BLACK) }
+        nav = LinearLayout(this@MainActivity).apply { gravity = Gravity.CENTER; orientation = LinearLayout.HORIZONTAL; setPadding(dp(8), 0, dp(8), 0); background = topLine(BLACK, DIVIDER) }
         addView(nav); bottomNavigation()
     }
 
     private fun topBar() = LinearLayout(this).apply {
-        gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(9), dp(16), dp(8)); setBackgroundColor(BLACK)
-        addView(avatar("P", 40, ACCENT))
-        title = TextView(this@MainActivity).apply { text = "Home"; textSize = 20f; setTypeface(null, 1); setTextColor(PRIMARY); gravity = Gravity.CENTER; layoutParams = LinearLayout.LayoutParams(0, -2, 1f) }
-        addView(icon("↻", "Refresh") { refreshAction() }); addView(icon("⌕", "Search") { explore() })
+        gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), dp(6), dp(12), dp(6)); setBackgroundColor(BLACK)
+        topAvatar = FrameLayout(this@MainActivity).apply { contentDescription = "Profile"; setOnClickListener { profile() } }
+        addView(topAvatar, LinearLayout.LayoutParams(dp(40), dp(40)))
+        title = TextView(this@MainActivity).apply { text = "Proximity"; textSize = 19f; setTypeface(null, 1); setTextColor(PRIMARY); gravity = Gravity.CENTER; layoutParams = LinearLayout.LayoutParams(0, -2, 1f) }
+        addView(title)
+        addView(icon(R.drawable.ic_refresh, "Refresh") { refreshAction() })
+        updateTopAvatar()
+    }
+    private fun updateTopAvatar() {
+        if (!::topAvatar.isInitialized) return
+        topAvatar.removeAllViews()
+        topAvatar.addView(profileAvatar(myProfile, "Y", 32, ACCENT), FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
     }
 
     private fun bottomNavigation() {
         nav.removeAllViews()
-        nav.addView(navItem("⌂", "Home") { home() }); nav.addView(navItem("⌕", "Explore") { explore() })
-        nav.addView(navItem("✉", "Messages") { messages() }); nav.addView(navItem("◎", "Profile") { profile() })
+        nav.addView(navItem(R.drawable.ic_home_outline, R.drawable.ic_home, "Home") { home() })
+        nav.addView(navItem(R.drawable.ic_search, R.drawable.ic_search, "Explore") { explore() })
+        nav.addView(navItem(R.drawable.ic_mail, R.drawable.ic_mail_filled, "Messages") { messages() })
+        nav.addView(navItem(R.drawable.ic_person, R.drawable.ic_person_filled, "Profile") { profile() })
+        val onHome = selectedDestination == "Home"
+        fab.visibility = if (onHome) View.VISIBLE else View.GONE
+        stream.setPadding(0, 0, 0, if (onHome) dp(80) else 0)
     }
-    private fun navItem(symbol: String, label: String, action: () -> Unit) = TextView(this).apply {
-        text = android.text.SpannableString("$symbol\n$label").apply { setSpan(android.text.style.RelativeSizeSpan(2.2f), 0, symbol.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }; gravity = Gravity.CENTER; textSize = 12f; setTypeface(null, if (label == selectedDestination) 1 else 0)
-        setTextColor(if (label == selectedDestination) ACCENT else SECONDARY); contentDescription = label
-        setPadding(0, dp(7), 0, dp(5)); background = if (label == selectedDestination) underline(ACCENT) else null
-        setOnClickListener { selectedDestination = label; bottomNavigation(); action() }; layoutParams = LinearLayout.LayoutParams(0, dp(72), 1f)
+    private fun navItem(outline: Int, filled: Int, label: String, action: () -> Unit) = ImageView(this).apply {
+        val selected = label == selectedDestination
+        setImageResource(if (selected) filled else outline); setColorFilter(if (selected) PRIMARY else SECONDARY)
+        scaleType = ImageView.ScaleType.CENTER_INSIDE; setPadding(dp(14), dp(12), dp(14), dp(12)); contentDescription = label
+        setOnClickListener { selectedDestination = label; bottomNavigation(); action() }; layoutParams = LinearLayout.LayoutParams(0, dp(54), 1f)
     }
 
     private fun home() {
         refreshAction = { home() }
-        selectedDestination = "Home"; bottomNavigation(); title.text = "Home"; reset(); feedTabs(false); composerPrompt()
+        selectedDestination = "Home"; bottomNavigation(); title.text = "Proximity"; reset(); feedTabs(false)
         screenJob = scope.launch { core?.watchRankedEducationalFeed()?.collect { posts ->
-            clearFrom(2)
+            clearFrom(1)
             if (posts.isEmpty()) empty("Your feed is waiting", "Share a lesson, question, or study tip with people nearby.")
             posts.forEach { post(it.candidate) }
         } }
     }
     private fun homeNearby() {
         refreshAction = { homeNearby() }
-        selectedDestination = "Home"; bottomNavigation(); title.text = "Nearby"; reset(); feedTabs(true); composerPrompt()
+        selectedDestination = "Home"; bottomNavigation(); title.text = "Proximity"; reset(); feedTabs(true)
         screenJob = scope.launch { core?.posts?.watchFeedCandidates()?.collect { candidates ->
-            clearFrom(2)
+            clearFrom(1)
             val nearby = candidates.filter { it.receivedFrom != null || !it.isMine }
             if (nearby.isEmpty()) empty("No nearby posts yet", "When another learner connects, their public posts will show here.")
             nearby.forEach(::post)
         } }
     }
-    private fun feedTabs(nearbySelected: Boolean) = stream.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; tab("For you", !nearbySelected) { home() }; tab("Nearby", nearbySelected) { homeNearby() } })
-    private fun LinearLayout.tab(label: String, selected: Boolean, click: () -> Unit) = addView(TextView(this@MainActivity).apply {
-        text = label; gravity = Gravity.CENTER; textSize = 15f; setTypeface(null, if (selected) 1 else 0); setTextColor(if (selected) PRIMARY else SECONDARY)
-        setPadding(0, dp(11), 0, dp(11)); background = if (selected) underline(ACCENT) else null; setOnClickListener { click() }; layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
-    })
-    private fun composerPrompt() = stream.addView(LinearLayout(this).apply {
-        gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(14)); background = underline(DIVIDER)
-        addView(profileAvatar(myProfile, "Y", 40, SUCCESS)); addView(TextView(this@MainActivity).apply { text = "What are you learning?"; textSize = 17f; setTextColor(SECONDARY); setPadding(dp(12),0,0,0); setOnClickListener { compose() }; layoutParams = LinearLayout.LayoutParams(0,-2,1f) }); addView(icon("＋", "Create post") { compose() })
+    private fun feedTabs(nearbySelected: Boolean) = stream.addView(LinearLayout(this).apply { background = underline(DIVIDER); tab("For you", !nearbySelected) { home() }; tab("Nearby", nearbySelected) { homeNearby() } })
+    private fun LinearLayout.tab(label: String, selected: Boolean, click: () -> Unit) = addView(FrameLayout(this@MainActivity).apply {
+        addView(TextView(this@MainActivity).apply { text = label; textSize = 16f; setTypeface(null, if (selected) 1 else 0); setTextColor(if (selected) PRIMARY else SECONDARY); gravity = Gravity.CENTER; setPadding(0, dp(15), 0, dp(17)) }, FrameLayout.LayoutParams(-1, -2))
+        if (selected) addView(View(this@MainActivity).apply { background = round(ACCENT, 2) }, FrameLayout.LayoutParams(dp(56), dp(4), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+        setOnClickListener { click() }; layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
     })
 
+    private fun handle(profile: Profile?): String = "@" + (profile?.displayName?.lowercase()?.filter { it.isLetterOrDigit() }?.takeIf { it.isNotEmpty() } ?: profile?.publicKey?.take(8) ?: "learner")
+    private fun ago(at: java.time.Instant): String {
+        val minutes = java.time.Duration.between(at, java.time.Instant.now()).toMinutes().coerceAtLeast(0)
+        return when { minutes < 1 -> "now"; minutes < 60 -> "${minutes}m"; minutes < 1440 -> "${minutes / 60}h"; else -> "${minutes / 1440}d" }
+    }
+
     private fun post(candidate: FeedCandidate) = stream.addView(LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(15), dp(16), 0); background = underline(DIVIDER)
+        gravity = Gravity.TOP; setPadding(dp(16), dp(12), dp(16), dp(4)); background = underline(DIVIDER)
+        addView(profileAvatar(candidate.author, "N", 40, ACCENT))
         addView(LinearLayout(this@MainActivity).apply {
-            gravity = Gravity.TOP; addView(profileAvatar(candidate.author, "N", 42, ACCENT))
+            orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, dp(6)); layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+            val name = candidate.author?.displayName?.takeIf { it.isNotBlank() } ?: if (candidate.isMine) "You" else "Nearby learner"
+            val meta = "  ${handle(candidate.author)} · ${ago(candidate.post.createdAt)}"
+            addView(TextView(this@MainActivity).apply {
+                text = android.text.SpannableStringBuilder(name + meta).apply {
+                    setSpan(android.text.style.StyleSpan(Typeface.BOLD), 0, name.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    setSpan(android.text.style.ForegroundColorSpan(PRIMARY), 0, name.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    setSpan(android.text.style.ForegroundColorSpan(SECONDARY), name.length, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                textSize = 15f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+            if (candidate.post.body.isNotBlank()) addView(TextView(this@MainActivity).apply { text = candidate.post.body; textSize = 16f; setTextColor(PRIMARY); setLineSpacing(dp(2).toFloat(), 1f); setPadding(0, dp(2), 0, dp(10)) })
+            candidate.post.image?.let { bytes ->
+                addView(ImageView(this@MainActivity).apply {
+                    setImageBitmap(BitmapFactory.decodeByteArray(bytes, 0, bytes.size)); scaleType = ImageView.ScaleType.CENTER_CROP
+                    background = round(SURFACE_ELEVATED, 16, DIVIDER); clipToOutline = true; contentDescription = "Post image"
+                    layoutParams = LinearLayout.LayoutParams(-1, dp(240)).apply { bottomMargin = dp(4) }
+                })
+            }
             addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL; setPadding(dp(11),0,0,dp(12)); layoutParams = LinearLayout.LayoutParams(0,-2,1f)
-                addView(TextView(this@MainActivity).apply { text = "${candidate.author?.displayName ?: "Nearby learner"}  ·  ${if (candidate.isMine) "You" else "Nearby"}"; textSize = 15f; setTypeface(null,1); setTextColor(PRIMARY) })
-                addView(TextView(this@MainActivity).apply { text = "Post"; textSize = 13f; setTextColor(SECONDARY); setPadding(0,dp(1),0,0) })
-                addView(TextView(this@MainActivity).apply { text = candidate.post.body; textSize = 16f; setTextColor(PRIMARY); setLineSpacing(dp(3).toFloat(),1f); setPadding(0,dp(7),0,dp(10)) })
-                candidate.post.image?.let { bytes -> addView(ImageView(this@MainActivity).apply { setImageBitmap(BitmapFactory.decodeByteArray(bytes,0,bytes.size)); scaleType = ImageView.ScaleType.CENTER_CROP; background = round(SURFACE_ELEVATED, 14); clipToOutline = true; contentDescription = "Post image"; layoutParams = LinearLayout.LayoutParams(-1,dp(210)) }) }
-                addView(LinearLayout(this@MainActivity).apply { val liked = candidate.myReaction != null; gravity = Gravity.CENTER_VERTICAL; setPadding(0,dp(11),0,dp(4)); action("◯",candidate.commentCount.toString(),"Replies"){replies(candidate.post.id)}; action(if (liked) "♥" else "♡",candidate.reactionCounts.values.sum().toString(),if (liked) "Unlike" else "Like",liked){ if (liked) unreact(candidate.post.id) else react(candidate.post.id) }; action("↗","","Share"){sharePost(candidate.post.body)} })
+                val liked = candidate.myReaction != null
+                gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(4), 0, 0)
+                action(R.drawable.ic_reply, candidate.commentCount.toString(), "Replies") { replies(candidate.post.id) }
+                action(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart, candidate.reactionCounts.values.sum().toString(), if (liked) "Unlike" else "Like", liked) { if (liked) unreact(candidate.post.id) else react(candidate.post.id) }
+                action(R.drawable.ic_share, "", "Share", false, Gravity.END) { sharePost(candidate.post.body) }
             })
         })
     })
-    private fun LinearLayout.action(symbol: String, count: String, description: String, active: Boolean = false, click: () -> Unit) = addView(LinearLayout(this@MainActivity).apply {
-        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, dp(6)); contentDescription = description
+    private fun LinearLayout.action(iconRes: Int, count: String, description: String, active: Boolean = false, align: Int = Gravity.START, click: () -> Unit) = addView(LinearLayout(this@MainActivity).apply {
+        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL or align; setPadding(0, dp(8), 0, dp(8)); contentDescription = description
         val tint = if (active) LIKED else SECONDARY
-        addView(TextView(this@MainActivity).apply { text = symbol; textSize = 28f; setTextColor(tint) })
-        if (count != "0" && count.isNotBlank()) addView(TextView(this@MainActivity).apply { text = count; textSize = 16f; setTextColor(tint); setPadding(dp(8), 0, 0, 0) })
+        addView(ImageView(this@MainActivity).apply { setImageResource(iconRes); setColorFilter(tint) }, LinearLayout.LayoutParams(dp(22), dp(22)))
+        if (count != "0" && count.isNotBlank()) addView(TextView(this@MainActivity).apply { text = count; textSize = 14f; setTextColor(tint); setPadding(dp(6), 0, 0, 0) })
         setOnClickListener { click() }; layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
     })
 
@@ -255,11 +309,84 @@ class MainActivity : Activity() {
     private fun profile() { refreshAction = { profile() }; selectedDestination="Profile"; bottomNavigation(); title.text="Profile"; reset(); screenJob=scope.launch { val app = core ?: return@launch; combine(app.profiles.watchMyProfile(), app.posts.watchFeedCandidates()) { me, posts -> me to posts }.collect { (me, posts) -> clearFrom(0); profileHeader(me); heading("Posts"); val mine = posts.filter { it.isMine }; if(mine.isEmpty()) empty("Your posts will appear here","Share what you are learning with people nearby.") else mine.forEach(::post) } } }
     private fun profileHeader(profile: Profile) = stream.addView(LinearLayout(this).apply { orientation=LinearLayout.VERTICAL
         addView(View(this@MainActivity).apply { setBackgroundColor(SURFACE_ELEVATED); layoutParams=LinearLayout.LayoutParams(-1,dp(120)) })
-        addView(LinearLayout(this@MainActivity).apply { gravity=Gravity.CENTER_VERTICAL; setPadding(dp(16),dp(12),dp(16),0); addView(profileAvatar(profile,"Y",72,ACCENT)); addView(Space(this@MainActivity),LinearLayout.LayoutParams(0,1,1f)); addView(TextView(this@MainActivity).apply{text="Edit profile";textSize=14f;setTypeface(null,1);setTextColor(PRIMARY);gravity=Gravity.CENTER;background=round(BLACK,22,DIVIDER);setOnClickListener{ editProfile(profile) };layoutParams=LinearLayout.LayoutParams(dp(112),dp(42))}) })
-        addView(TextView(this@MainActivity).apply{text=profile.displayName?:"Your name";textSize=20f;setTypeface(null,1);setTextColor(PRIMARY);setPadding(dp(16),dp(12),0,0)}); addView(TextView(this@MainActivity).apply{text="@${profile.publicKey.take(10)}";textSize=14f;setTextColor(SECONDARY);setPadding(dp(16),dp(3),0,dp(15))})
+        addView(LinearLayout(this@MainActivity).apply { gravity=Gravity.BOTTOM; setPadding(dp(16),0,dp(16),0); layoutParams=LinearLayout.LayoutParams(-1,-2).apply{topMargin=-dp(36)}; addView(LinearLayout(this@MainActivity).apply { setPadding(dp(4),dp(4),dp(4),dp(4)); background=round(BLACK,44); addView(profileAvatar(profile,"Y",80,ACCENT)) }); addView(Space(this@MainActivity),LinearLayout.LayoutParams(0,1,1f)); addView(TextView(this@MainActivity).apply{text="Edit profile";textSize=14f;setTypeface(null,1);setTextColor(PRIMARY);gravity=Gravity.CENTER;background=round(BLACK,22,DIVIDER);setOnClickListener{ editProfile(profile) };layoutParams=LinearLayout.LayoutParams(dp(112),dp(42))}) })
+        addView(TextView(this@MainActivity).apply{text=profile.displayName?:"Your name";textSize=20f;setTypeface(null,1);setTextColor(PRIMARY);setPadding(dp(16),dp(12),0,0)}); addView(TextView(this@MainActivity).apply{text=handle(profile);textSize=14f;setTextColor(SECONDARY);setPadding(dp(16),dp(3),0,dp(15))})
     })
 
-    private fun compose() { val text=EditText(this).apply{hint="What’s on your mind?";minLines=5;textSize=18f;setTextColor(PRIMARY);setHintTextColor(SECONDARY);setBackgroundColor(Color.TRANSPARENT)}; val hint=TextView(this).apply{this.text="Please keep it respectful — abusive, profane or explicit posts are blocked.";textSize=13f;setTextColor(SECONDARY);setPadding(dp(16),0,dp(16),dp(8))}; val photo=TextView(this).apply{this.text=if(pendingImage==null)"▧  Add photo" else "✓ Photo attached";textSize=15f;setTextColor(ACCENT);setPadding(dp(16),dp(8),0,dp(10));setOnClickListener{startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},PICK_IMAGE)}}; AlertDialog.Builder(this).setTitle("Create post").setView(LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(18),dp(12),0);addView(text);addView(hint);addView(photo)}).setNegativeButton("Cancel",null).setPositiveButton("Post"){_,_->scope.launch(Dispatchers.IO){runCatching{core?.posts?.create(text.text.toString(),pendingImage);pendingImage=null}.onFailure{withContext(Dispatchers.Main){popup("Post wasn’t published",it.message?:"This post couldn’t be published.")}}}}.show() }
+    private fun compose() {
+        pendingImage = null
+        val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar)
+        val input = EditText(this).apply {
+            hint = "What’s on your mind?"; textSize = 20f; setTextColor(PRIMARY); setHintTextColor(SECONDARY); background = null; gravity = Gravity.TOP
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        val preview = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; background = round(SURFACE_ELEVATED, 16, DIVIDER); clipToOutline = true; visibility = View.GONE }
+        val postButton = TextView(this).apply { text = "Post"; textSize = 15f; setTypeface(null, 1); setTextColor(Color.WHITE); gravity = Gravity.CENTER; background = round(ACCENT, 18); setPadding(dp(18), dp(8), dp(18), dp(8)) }
+        fun refresh() {
+            val image = pendingImage
+            preview.visibility = if (image == null) View.GONE else View.VISIBLE
+            if (image != null) preview.setImageBitmap(BitmapFactory.decodeByteArray(image, 0, image.size))
+            postButton.alpha = if (input.text.isNotBlank() || image != null) 1f else 0.5f
+        }
+        composeRefresh = { refresh() }
+        input.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { refresh() }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+        postButton.setOnClickListener {
+            val text = input.text.toString(); val image = pendingImage
+            if (text.isBlank() && image == null) return@setOnClickListener
+            postButton.isEnabled = false; postButton.alpha = 0.5f
+            scope.launch(Dispatchers.IO) {
+                runCatching { checkNotNull(core) { "Proximity is still starting" }.posts.create(text, image) }
+                    .onSuccess { withContext(Dispatchers.Main) { pendingImage = null; dialog.dismiss() } }
+                    .onFailure { error -> withContext(Dispatchers.Main) { postButton.isEnabled = true; refresh(); popup("Post wasn’t published", error.message ?: "This post couldn’t be published.") } }
+            }
+        }
+        val photoButton = ImageView(this).apply {
+            setImageResource(R.drawable.ic_image); setColorFilter(ACCENT); scaleType = ImageView.ScaleType.CENTER_INSIDE; setPadding(dp(12), dp(12), dp(12), dp(12)); contentDescription = "Add photo"
+            setOnClickListener { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "image/*"; addCategory(Intent.CATEGORY_OPENABLE) }, PICK_IMAGE) }
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+        }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setBackgroundColor(BLACK)
+            addView(LinearLayout(this@MainActivity).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                addView(TextView(this@MainActivity).apply { text = "Cancel"; textSize = 16f; setTextColor(PRIMARY); setPadding(dp(16), dp(14), dp(16), dp(14)); setOnClickListener { dialog.dismiss() } })
+                addView(Space(this@MainActivity), LinearLayout.LayoutParams(0, 1, 1f))
+                addView(postButton, LinearLayout.LayoutParams(-2, -2).apply { setMargins(0, 0, dp(16), 0) })
+            })
+            addView(ScrollView(this@MainActivity).apply {
+                isFillViewport = true
+                addView(LinearLayout(this@MainActivity).apply {
+                    gravity = Gravity.TOP; setPadding(dp(16), dp(8), dp(16), dp(8))
+                    addView(profileAvatar(myProfile, "Y", 40, ACCENT))
+                    addView(LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0); layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+                        addView(input)
+                        addView(preview, LinearLayout.LayoutParams(-1, dp(200)).apply { topMargin = dp(8) })
+                    })
+                })
+                layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
+            })
+            addView(TextView(this@MainActivity).apply { text = "Everyone nearby can reply"; textSize = 14f; setTextColor(ACCENT); setPadding(dp(16), dp(12), dp(16), dp(12)); background = topLine(BLACK, DIVIDER) })
+            addView(LinearLayout(this@MainActivity).apply {
+                gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), 0, dp(16), dp(4)); background = topLine(BLACK, DIVIDER)
+                addView(photoButton)
+                addView(Space(this@MainActivity), LinearLayout.LayoutParams(0, 1, 1f))
+                addView(TextView(this@MainActivity).apply { text = "Abusive or explicit posts are blocked"; textSize = 12f; setTextColor(SECONDARY) })
+            })
+        }
+        dialog.setContentView(root)
+        dialog.window?.apply {
+            setLayout(-1, -1); statusBarColor = BLACK; navigationBarColor = BLACK
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        }
+        dialog.setOnDismissListener { composeRefresh = null }
+        refresh(); dialog.show(); input.requestFocus()
+    }
     private fun react(id:String){scope.launch(Dispatchers.IO){core?.reactions?.add(id,"like")}}
     private fun unreact(id:String){scope.launch(Dispatchers.IO){core?.reactions?.remove(id)}}
     private fun sharePost(body: String) {
@@ -348,7 +475,17 @@ class MainActivity : Activity() {
     private fun empty(head:String,body:String)=stream.addView(LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;setPadding(dp(36),dp(66),dp(36),dp(30));addView(TextView(this@MainActivity).apply{text=head;textSize=20f;setTypeface(null,1);gravity=Gravity.CENTER;setTextColor(PRIMARY)});addView(TextView(this@MainActivity).apply{text=body;textSize=15f;gravity=Gravity.CENTER;setTextColor(SECONDARY);setLineSpacing(dp(3).toFloat(),1f);setPadding(0,dp(10),0,0)})})
     private fun avatar(letter:String,size:Int,color:Int)=TextView(this).apply{text=letter.uppercase();gravity=Gravity.CENTER;textSize=size/2.6f;setTypeface(null,1);setTextColor(Color.WHITE);background=round(color,size/2);layoutParams=LinearLayout.LayoutParams(dp(size),dp(size))}
     private fun profileAvatar(profile: Profile?, fallback: String, size: Int, color: Int): View = profile?.avatar?.let { bytes -> ImageView(this).apply { setImageBitmap(BitmapFactory.decodeByteArray(bytes,0,bytes.size)); scaleType=ImageView.ScaleType.CENTER_CROP; background=round(color,size/2); clipToOutline=true; contentDescription="Profile photo"; layoutParams=LinearLayout.LayoutParams(dp(size),dp(size)) } } ?: avatar(profile?.displayName?.takeIf { !it.isNullOrBlank() }?.take(1) ?: fallback, size, color)
-    private fun icon(symbol:String,description:String,click:()->Unit)=TextView(this).apply{text=symbol;textSize=32f;gravity=Gravity.CENTER;setTextColor(PRIMARY);contentDescription=description;setOnClickListener{click()};layoutParams=LinearLayout.LayoutParams(dp(48),dp(48))}
+    private fun icon(res: Int, description: String, click: () -> Unit) = ImageView(this).apply {
+        setImageResource(res); setColorFilter(PRIMARY); scaleType = ImageView.ScaleType.CENTER_INSIDE; setPadding(dp(8), dp(8), dp(8), dp(8))
+        contentDescription = description; setOnClickListener { click() }; layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
+    }
+    private fun topLine(fill: Int, line: Int) = LayerDrawable(arrayOf(
+        GradientDrawable().apply { setColor(fill) },
+        GradientDrawable().apply { setColor(line) },
+    )).apply {
+        setLayerGravity(1, Gravity.TOP)
+        setLayerHeight(1, dp(1))
+    }
     private fun underline(color:Int) = LayerDrawable(arrayOf(
         GradientDrawable().apply { setColor(Color.TRANSPARENT) },
         GradientDrawable().apply { setColor(color) },
@@ -359,8 +496,21 @@ class MainActivity : Activity() {
     private fun round(color:Int,radius:Int,stroke:Int?=null)=GradientDrawable().apply{setColor(color);cornerRadius=dp(radius).toFloat();stroke?.let{setStroke(dp(1),it)}}
     private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt(); private fun toast(value:String)=Toast.makeText(this,value,Toast.LENGTH_SHORT).show()
     private fun popup(title: String, message: String) { AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("OK", null).show() }
-    override fun onActivityResult(code:Int,result:Int,data:Intent?){super.onActivityResult(code,result,data);if(result!=RESULT_OK)return; when(code) { PICK_IMAGE -> pendingImage=data?.data?.let(::compress); PICK_PROFILE_IMAGE -> { pendingProfileAvatar=data?.data?.let(::compressAvatar); if(pendingProfileAvatar == null) popup("Couldn’t use that photo", "Please choose another image.") } }}
-    private fun compress(uri:Uri):ByteArray?=contentResolver.openInputStream(uri)?.use{BitmapFactory.decodeStream(it)}?.let{bitmap->ByteArrayOutputStream().use{out->bitmap.compress(Bitmap.CompressFormat.JPEG,75,out);out.toByteArray().takeIf{it.size<=256*1024}}}
+    override fun onActivityResult(code:Int,result:Int,data:Intent?){super.onActivityResult(code,result,data);if(result!=RESULT_OK)return; when(code) { PICK_IMAGE -> { pendingImage = data?.data?.let(::compress); if (pendingImage == null) toast("Couldn’t use that photo. Try another image."); composeRefresh?.invoke() }; PICK_PROFILE_IMAGE -> { pendingProfileAvatar=data?.data?.let(::compressAvatar); if(pendingProfileAvatar == null) popup("Couldn’t use that photo", "Please choose another image.") } }}
+    private fun compress(uri: Uri): ByteArray? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 2048) sample *= 2
+        val source = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) } ?: return null
+        val scale = minOf(1f, 1280f / maxOf(source.width, source.height))
+        val bitmap = if (scale < 1f) Bitmap.createScaledBitmap(source, (source.width * scale).toInt().coerceAtLeast(1), (source.height * scale).toInt().coerceAtLeast(1), true) else source
+        for (quality in listOf(80, 70, 60, 50, 40, 30)) {
+            val bytes = ByteArrayOutputStream().use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out); out.toByteArray() }
+            if (bytes.size <= 250 * 1024) return bytes
+        }
+        return null
+    }
     private fun compressAvatar(uri: Uri): ByteArray? = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }?.let { source ->
         val side = minOf(source.width, source.height)
         if (side <= 0) return@let null
