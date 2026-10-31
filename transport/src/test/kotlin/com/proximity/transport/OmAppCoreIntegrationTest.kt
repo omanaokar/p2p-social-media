@@ -50,7 +50,7 @@ class OmAppCoreIntegrationTest {
         coreB.start()
 
         // Device A writes a post
-        val post = coreA.posts.create("Post broadcast over Harshil's NearbyTransport!")
+        val post = coreA.posts.create("Post broadcast over Harshil's NearbyTransport: Kotlin coroutines and P2P mesh network architecture!")
 
         // Device B should receive the post through the sync engine over NearbyTransport!
         val candidates = coreB.posts.watchFeedCandidates().awaitMatching(10_000) { list: List<FeedCandidate> ->
@@ -58,7 +58,7 @@ class OmAppCoreIntegrationTest {
         }
         val receivedPostCandidate = candidates.single { it.post.id == post.id }
 
-        assertEquals("Post broadcast over Harshil's NearbyTransport!", receivedPostCandidate.post.body)
+        assertEquals(post.body, receivedPostCandidate.post.body)
         assertEquals(coreA.identity.currentUser.id, receivedPostCandidate.post.authorId)
         assertEquals(1, receivedPostCandidate.post.hopCount)
 

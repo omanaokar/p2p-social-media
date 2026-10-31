@@ -13,20 +13,8 @@ import kotlin.math.ln
  * educational-topic alignment bonus derived from the existing
  * [TextContentClassifier].
  *
- * ── What this IS ──────────────────────────────────────────────────────────────
- * BM25 is a well-established ranked retrieval function. Combined with the
- * classifier's topic detection it provides genuinely useful local search over
- * a small corpus without network access or heavy dependencies.
- *
- * ── What this is NOT ─────────────────────────────────────────────────────────
- * This is NOT semantic search. It matches surface-level terms, not meaning.
- * A query for "recursion" will NOT surface a post about "call stack unwinding"
- * unless those words appear verbatim. Synonym matching, conceptual proximity,
- * and cross-lingual retrieval all require dense sentence embeddings;
- * see [SemanticPostSearchEngine] for that path and its documented trade-offs.
- *
- * @param k1 BM25 term-saturation constant (1.2–2.0 typical; default 1.5).
- * @param b  BM25 length-normalisation factor (0.0–1.0; 0.75 is standard).
+ * When configured with a [ContentModerator], strictly enforces educational policy
+ * so non-educational, inappropriate, or uncertain posts are filtered.
  */
 class KeywordPostSearchEngine(
     private val classifier: TextContentClassifier = HeuristicTextClassifier(),
@@ -57,7 +45,9 @@ class KeywordPostSearchEngine(
 
         // 2. Filter out content rejected by moderation policy if moderator is present
         val eligiblePosts = if (moderator != null) {
-            nonExpiredPosts.filter { !moderator.evaluate(it.post.body).isRejected }
+            nonExpiredPosts.filter { candidate ->
+                moderator.evaluate(candidate.post.body).isApproved
+            }
         } else {
             nonExpiredPosts
         }
@@ -104,8 +94,7 @@ class KeywordPostSearchEngine(
 
             if (bm25 <= 0.0) continue
 
-            // Educational topic alignment bonus (reuses the existing classifier —
-            // no duplicated logic)
+            // Educational topic alignment bonus
             val classification = classifier.classify(candidate.post.body)
             val topicBonus = when (classification.category) {
                 PrimaryCategory.EDUCATIONAL -> 0.20

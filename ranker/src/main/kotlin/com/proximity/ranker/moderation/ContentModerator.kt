@@ -16,7 +16,7 @@ enum class ModerationAction {
     /** Content is ambiguous, low confidence, or non-educational. Requires manual or community review. */
     FLAG_FOR_REVIEW,
 
-    /** Content violates community safety policies (e.g. explicit/adult material). Rejected immediately. */
+    /** Content violates community safety policies (e.g. explicit/adult/abusive material). Rejected immediately. */
     REJECT
 }
 
@@ -37,7 +37,7 @@ data class ModerationDecision(
  * Configuration tunables for moderation enforcement policy.
  */
 data class ModerationPolicyConfig(
-    /** If true, posts classified as casual non-educational will be flagged rather than allowed. */
+    /** If true, posts classified as casual non-educational will be flagged/rejected rather than allowed. */
     val strictEducationalOnly: Boolean = true,
     /** Minimum confidence required for automatic approval of educational posts. */
     val minConfidenceForAutoApproval: ConfidenceLevel = ConfidenceLevel.MEDIUM
@@ -55,7 +55,7 @@ interface ContentModerator {
  * Default implementation of content moderation policy.
  *
  * It enforces:
- * - Immediate REJECT for adult/explicit content.
+ * - Immediate REJECT for inappropriate, adult, abusive, or prohibited content.
  * - FLAG_FOR_REVIEW for ambiguous/UNCERTAIN content (never silently approving ambiguous inputs).
  * - FLAG_FOR_REVIEW for non-educational casual content when [ModerationPolicyConfig.strictEducationalOnly] is true.
  * - ALLOW only for verified educational content meeting the minimum confidence threshold.
@@ -71,11 +71,11 @@ class DefaultContentModerator(
     }
 
     override fun decide(classification: ClassificationResult): ModerationDecision {
-        // 1. Adult Content Enforcement
-        if (classification.isAdult) {
+        // 1. Inappropriate / Adult Content Enforcement
+        if (classification.isInappropriate || classification.isAdult) {
             return ModerationDecision(
                 action = ModerationAction.REJECT,
-                reason = "Post contains adult or sexually explicit indicators, which are strictly prohibited.",
+                reason = "Post contains inappropriate, abusive, or sexually explicit indicators, which are strictly prohibited.",
                 classification = classification
             )
         }

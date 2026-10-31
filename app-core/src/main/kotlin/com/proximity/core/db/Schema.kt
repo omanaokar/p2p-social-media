@@ -91,5 +91,20 @@ internal object Schema {
             "CREATE TABLE tombstones (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL)",
             "CREATE TABLE blocked (user_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL)",
         ),
+        // v2: covers peer reaction lookup without scanning a user's complete reaction history.
+        listOf(
+            "CREATE INDEX reactions_by_author_type_post ON reactions(author_id, type, post_id)",
+        ),
+        // v3: durable event state for profile interaction idempotency.
+        listOf(
+            """CREATE TABLE processed_interaction_events (
+                event_id TEXT PRIMARY KEY,
+                state TEXT NOT NULL CHECK (state IN ('PENDING', 'APPLIED'))
+            )""",
+        ),
+        // v4: pending event recovery is scoped to the identity whose profile it updates.
+        listOf(
+            "ALTER TABLE processed_interaction_events ADD COLUMN user_id TEXT",
+        ),
     )
 }

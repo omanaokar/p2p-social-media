@@ -20,6 +20,10 @@ import com.proximity.core.sync.SyncEngine
 import com.proximity.core.toBase64
 import com.proximity.core.wire.ObjectKind
 import com.proximity.core.wire.SignedObject
+import com.proximity.ranker.classifier.HeuristicTextClassifier
+import com.proximity.ranker.classifier.TextContentClassifier
+import com.proximity.ranker.moderation.ContentModerator
+import com.proximity.ranker.moderation.DefaultContentModerator
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
@@ -34,10 +38,22 @@ class PostRepositoryImpl(
     private val config: AppConfig,
     private val clock: Clock,
     private val io: CoroutineDispatcher,
+    private val classifier: TextContentClassifier = store.classifier,
+    private val moderator: ContentModerator = store.moderator,
 ) : PostRepository {
 
     override suspend fun create(body: String, image: ByteArray?): Post = withContext(io) {
         require(body.isNotBlank() || image != null) { "Post is empty" }
+        if (config.strictEducationFilter) {
+            val classification = classifier.classify(body)
+            require(classification.isEducational) {
+                "Only educational posts can be published. Found ${classification.category}: ${classification.summary}"
+            }
+            val decision = moderator.decide(classification)
+            require(decision.isApproved) {
+                "Only educational posts can be published. Moderation rejected: ${decision.reason}"
+            }
+        }
         val obj = SignedObject.create(
             ObjectKind.POST,
             mapOf(
@@ -77,7 +93,7 @@ class PostRepositoryImpl(
         }
         val profiles = db.query("SELECT * FROM profiles").associate { it.str("public_key") to it.toProfile() }
 
-        return posts.map { row ->
+        val candidates = posts.map { row ->
             FeedCandidate(
                 post = row.toPost(),
                 author = profiles[row.str("author_id")],
@@ -89,6 +105,15 @@ class PostRepositoryImpl(
                 myReaction = mine[row.str("id")],
                 isMine = row.str("author_id") == me,
             )
+        }
+
+        return if (config.strictEducationFilter) {
+            candidates.filter { candidate ->
+                val classification = classifier.classify(candidate.post.body)
+                classification.isEducational && moderator.decide(classification).isApproved
+            }
+        } else {
+            candidates
         }
     }
 

@@ -13,6 +13,7 @@ import com.proximity.core.store.toProfile
 import com.proximity.core.sync.SyncEngine
 import com.proximity.core.wire.ObjectKind
 import com.proximity.core.wire.SignedObject
+import com.proximity.ranker.RecommendationSystem
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
@@ -25,6 +26,7 @@ class CommentRepositoryImpl(
     private val identity: IdentityService,
     private val clock: Clock,
     private val io: CoroutineDispatcher,
+    private val recommendations: RecommendationSystem? = null,
 ) : CommentRepository {
 
     override suspend fun add(postId: String, body: String): Comment = withContext(io) {
@@ -42,7 +44,13 @@ class CommentRepositoryImpl(
         )
         store.saveLocal(obj)
         sync.publish(obj)
-        db.query("SELECT * FROM comments WHERE id = ?", obj.id).first().toComment()
+        val comment = db.query("SELECT * FROM comments WHERE id = ?", obj.id).first().toComment()
+        recommendations?.recordFeedInteraction(
+            postId = postId,
+            type = com.proximity.contracts.InteractionType.COMMENT,
+            eventId = obj.id,
+        )
+        comment
     }
 
     override fun watchForPost(postId: String): Flow<List<CommentView>> = db.watch(setOf("comments", "profiles", "blocked")) {

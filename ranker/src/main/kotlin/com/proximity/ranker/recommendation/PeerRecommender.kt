@@ -10,6 +10,7 @@ import com.proximity.ranker.classifier.PrimaryCategory
 import com.proximity.ranker.classifier.TextContentClassifier
 import com.proximity.ranker.profile.InMemoryUserInterestProfileStore
 import com.proximity.ranker.profile.UserInterestProfileStore
+import kotlin.math.roundToInt
 
 /**
  * Explanation reasons for why a candidate peer was recommended.
@@ -50,7 +51,10 @@ data class PeerRecommendation(
  * @param existingFriendIds Users already connected/friended with the local user (to be excluded).
  * @param blockedUserIds Users blocked locally (to be excluded).
  * @param candidatePosts Stored posts authored by candidates to infer candidate educational interests.
- * @param mutualContactInteractions Map of candidateUserId -> count of mutual touchpoints (e.g., commenting/reacting on the same posts).
+ * @param nearbyPeerProfiles Currently detected peers over local radios.
+ * @param mutualContactInteractions Map of candidateUserId -> count of mutual touchpoints.
+ * @param myLikedPostIds Set of post IDs liked/saved/reacted to by current user.
+ * @param peerLikedPostIds Map of candidateUserId -> set of post IDs liked/reacted to by that peer.
  */
 data class PeerRecommendationContext(
     val currentUserId: String,
@@ -59,7 +63,9 @@ data class PeerRecommendationContext(
     val blockedUserIds: Set<String> = emptySet(),
     val candidatePosts: List<FeedCandidate> = emptyList(),
     val nearbyPeerProfiles: List<PeerProfile> = emptyList(),
-    val mutualContactInteractions: Map<String, Int> = emptyMap()
+    val mutualContactInteractions: Map<String, Int> = emptyMap(),
+    val myLikedPostIds: Set<String> = emptySet(),
+    val peerLikedPostIds: Map<String, Set<String>> = emptyMap()
 )
 
 /**
@@ -73,9 +79,14 @@ interface PeerRecommender {
  * Deterministic, offline, privacy-preserving recommendation engine.
  *
  * Scoring signals:
- * 1. Shared Educational Interests: Inferred from the candidate's authored posts compared to the user's selected interests.
- * 2. Mutual Connections / Interactions: Derived from shared touchpoints on the local device.
- * 3. Proximity: Bonus if the peer is currently nearby or has strong radio signal.
+ * 1. Jaccard Similarity on Liked Educational Posts:
+ *    Intersection / Union of liked educational post IDs between current user and peer.
+ * 2. Topic-Level Profile Similarity:
+ *    Shared topic interests between the user's persistent profile (or declared topics) and the peer's topics.
+ * 3. Mutual Connections / Interactions:
+ *    Derived from shared touchpoints on the local device.
+ * 4. Physical / Radio Proximity:
+ *    Bonus if the peer is currently in direct Bluetooth / Wi-Fi Direct range.
  */
 class LocalPeerRecommender(
     private val profileStore: UserInterestProfileStore = InMemoryUserInterestProfileStore(),
@@ -84,7 +95,8 @@ class LocalPeerRecommender(
 
     override fun recommend(context: PeerRecommendationContext): List<PeerRecommendation> {
         val currentUserId = context.currentUserId
-        val mySelectedTopics = profileStore.getProfile().selectedTopics
+        val userProfile = profileStore.getProfile()
+        val mySelectedTopics = userProfile.selectedTopics
         val blocked = context.blockedUserIds
         val friends = context.existingFriendIds
 
@@ -104,55 +116,108 @@ class LocalPeerRecommender(
         // 2. Map nearby status for quick lookup
         val nearbyMap = context.nearbyPeerProfiles.associate { it.userId to it }
 
-        // 3. Infer candidate educational topics from their posts
+        // 3. Filter educational candidate posts and map their primary/detected topics
+        val educationalPostsById = mutableMapOf<String, Set<EducationalTopic>>()
         val candidateTopics = mutableMapOf<String, MutableSet<EducationalTopic>>()
+
         for (candidatePost in context.candidatePosts) {
-            val authorId = candidatePost.post.authorId
-            if (authorId in candidatesByUserId) {
-                val classification: ClassificationResult = classifier.classify(candidatePost.post.body)
-                if (classification.category == PrimaryCategory.EDUCATIONAL) {
+            val post = candidatePost.post
+            val classification: ClassificationResult = classifier.classify(post.body)
+            if (classification.category == PrimaryCategory.EDUCATIONAL) {
+                educationalPostsById[post.id] = classification.educationalTopics
+                val authorId = post.authorId
+                if (authorId in candidatesByUserId) {
                     val topics = candidateTopics.getOrPut(authorId) { mutableSetOf() }
                     topics.addAll(classification.educationalTopics)
                 }
             }
         }
 
+        // Sanitize liked posts: only consider educational posts in Jaccard similarity
+        // If educational status of a liked post is known, only keep if educational;
+        // if not in candidatePosts cache, keep only if it matches known educational posts or treat as educational.
+        val myEducationalLiked = if (educationalPostsById.isNotEmpty()) {
+            context.myLikedPostIds.filter { id -> educationalPostsById[id] != null }.toSet()
+        } else {
+            context.myLikedPostIds
+        }
+
         // 4. Compute recommendation scores for each valid candidate
         val recommendations = mutableListOf<PeerRecommendation>()
 
         for ((userId, profile) in candidatesByUserId) {
-            val peerTopics = candidateTopics[userId] ?: emptySet()
-            val sharedTopics = if (mySelectedTopics.isNotEmpty()) {
-                peerTopics.intersect(mySelectedTopics)
+            val peerTopics = candidateTopics[userId]?.toSet() ?: emptySet()
+
+            // ── Signal 1: Jaccard Similarity on Liked Educational Posts ────────────────
+            val peerLikedRaw = context.peerLikedPostIds[userId] ?: emptySet()
+            val peerEducationalLiked = if (educationalPostsById.isNotEmpty()) {
+                peerLikedRaw.filter { id -> educationalPostsById[id] != null }.toSet()
             } else {
-                emptySet()
+                peerLikedRaw
             }
 
-            // Signal 1: Shared interest score (up to 1.0)
-            val interestScore = if (sharedTopics.isNotEmpty()) {
-                (sharedTopics.size.toDouble() / mySelectedTopics.size.coerceAtLeast(1)).coerceAtMost(1.0)
-            } else if (peerTopics.isNotEmpty() && mySelectedTopics.isEmpty()) {
-                // If current user hasn't selected topics yet, give modest baseline for educational contributors
-                0.2
+            val jaccardScore: Double = if (myEducationalLiked.isNotEmpty() && peerEducationalLiked.isNotEmpty()) {
+                val intersectionSize = myEducationalLiked.intersect(peerEducationalLiked).size
+                val unionSize = myEducationalLiked.union(peerEducationalLiked).size
+                if (unionSize > 0) intersectionSize.toDouble() / unionSize else 0.0
             } else {
                 0.0
             }
 
-            // Signal 2: Mutual connection / interaction score (log scale)
+            // Also derive topics from posts the peer liked
+            val peerLikedTopics = peerEducationalLiked.flatMap { educationalPostsById[it] ?: emptySet() }.toSet()
+            val effectivePeerTopics = peerTopics + peerLikedTopics
+
+            // ── Signal 2: Topic-Level Profile Similarity ─────────────────────────────
+            val sharedTopics = if (mySelectedTopics.isNotEmpty()) {
+                effectivePeerTopics.intersect(mySelectedTopics)
+            } else if (!userProfile.isColdStart) {
+                effectivePeerTopics.filter { userProfile.getInterestScore(it) > 0.5 }.toSet()
+            } else {
+                emptySet()
+            }
+
+            val topicSimilarity: Double = if (sharedTopics.isNotEmpty()) {
+                val base = if (mySelectedTopics.isNotEmpty()) {
+                    sharedTopics.size.toDouble() / mySelectedTopics.size.coerceAtLeast(1)
+                } else {
+                    sharedTopics.map { userProfile.getInterestScore(it) }.average()
+                }
+                base.coerceIn(0.0, 1.0)
+            } else if (effectivePeerTopics.isNotEmpty() && userProfile.isColdStart) {
+                // Cold-start fallback: gentle baseline for active educational peers without bias
+                0.20
+            } else {
+                0.0
+            }
+
+            // Combined educational interest score (liked post similarity + topic profile similarity)
+            // When liked posts overlap exists, heavily weight Jaccard; otherwise fallback gracefully to topic similarity
+            val interestScore = if (jaccardScore > 0.0) {
+                (0.60 * jaccardScore) + (0.40 * topicSimilarity)
+            } else {
+                topicSimilarity
+            }
+
+            // ── Signal 3: Mutual Connections / Touchpoints ────────────────────────────
             val mutualInteractions = context.mutualContactInteractions[userId] ?: 0
             val mutualScore = (mutualInteractions / 10.0).coerceIn(0.0, 1.0)
 
-            // Signal 3: Physical proximity bonus
+            // ── Signal 4: Physical Radio Proximity ────────────────────────────────────
             val nearbyInfo = nearbyMap[userId]
             val isNearby = nearbyInfo?.isNearby == true
-            val proximityScore = if (isNearby) 0.3 else 0.0
+            val proximityScore = if (isNearby) 0.30 else 0.0
 
-            // Composite score calculation
+            // ── Composite Score Calculation ──────────────────────────────────────────
             val totalScore = (0.50 * interestScore) + (0.35 * mutualScore) + (0.15 * proximityScore)
 
-            // Construct meaningful explanation
+            // ── Human-Readable Explanation ────────────────────────────────────────────
             val reasonSummary = buildString {
                 val reasons = mutableListOf<String>()
+                if (jaccardScore > 0.0) {
+                    val sharedCount = myEducationalLiked.intersect(peerEducationalLiked).size
+                    reasons += "$sharedCount shared liked educational post(s)"
+                }
                 if (sharedTopics.isNotEmpty()) {
                     reasons += "Shares ${sharedTopics.size} topic(s): ${sharedTopics.joinToString { it.displayName }}"
                 }
@@ -163,8 +228,8 @@ class LocalPeerRecommender(
                     reasons += "Currently nearby"
                 }
                 if (reasons.isEmpty()) {
-                    if (peerTopics.isNotEmpty()) {
-                        reasons += "Active in ${peerTopics.joinToString { it.displayName }}"
+                    if (effectivePeerTopics.isNotEmpty()) {
+                        reasons += "Active in ${effectivePeerTopics.joinToString { it.displayName }}"
                     } else {
                         reasons += "Discovered peer"
                     }
@@ -180,7 +245,7 @@ class LocalPeerRecommender(
             )
         }
 
-        // Stable deterministic sort by score descending, then by user ID
+        // Stable deterministic sort by score descending, then by public key
         return recommendations.sortedWith(
             compareByDescending<PeerRecommendation> { it.score }
                 .thenBy { it.profile.publicKey }

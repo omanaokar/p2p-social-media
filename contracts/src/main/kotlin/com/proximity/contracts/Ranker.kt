@@ -20,4 +20,4 @@ class RankedPost(
     val reason: String,
 )
 
-enum class InteractionType { OPEN, REACT, COMMENT, DWELL, HIDE }
+enum class InteractionType { OPEN, REACT, COMMENT, DWELL, HIDE, SAVE }

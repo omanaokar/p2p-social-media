@@ -43,8 +43,15 @@ class LocalAdaptiveLearningRecommender(
     private val engagements = ConcurrentHashMap<EducationalTopic, TopicEngagement>()
 
     override fun recordInteraction(post: Post, type: InteractionType, dwell: Duration?) {
+        recordInteraction(post, type, dwell, profileAlreadyRecorded = false)
+    }
+
+    override fun recordInteraction(post: Post, type: InteractionType, dwell: Duration?, profileAlreadyRecorded: Boolean) {
         val classification = classifier.classify(post.body)
         if (classification.category != PrimaryCategory.EDUCATIONAL) return
+
+        // Update persistent profileStore topic scores
+        if (!profileAlreadyRecorded) profileStore.recordInteraction(post, type, classification)
 
         val topics = classification.educationalTopics
         if (topics.isEmpty()) return
@@ -65,6 +72,10 @@ class LocalAdaptiveLearningRecommender(
                     )
                     InteractionType.REACT -> prev.copy(
                         reactCount = prev.reactCount + 1,
+                        lastInteractedAt = Instant.now()
+                    )
+                    InteractionType.SAVE -> prev.copy(
+                        saveCount = prev.saveCount + 1,
                         lastInteractedAt = Instant.now()
                     )
                     InteractionType.COMMENT -> prev.copy(
@@ -200,7 +211,7 @@ class LocalAdaptiveLearningRecommender(
             AdaptivePostRecommendation(
                 candidate = candidate,
                 topic = primaryTopic,
-                score = totalScore,
+                score = totalScore.coerceIn(0.0, 1.0),
                 status = topicRec.status,
                 explanation = postExplanation
             )
@@ -343,6 +354,8 @@ class LocalAdaptiveLearningRecommender(
             EducationalTopic.AI_ML -> to == EducationalTopic.MATHEMATICS || to == EducationalTopic.PROGRAMMING
             EducationalTopic.CYBERSECURITY -> to == EducationalTopic.CLOUD_COMPUTING || to == EducationalTopic.PROGRAMMING
             EducationalTopic.CLOUD_COMPUTING -> to == EducationalTopic.CYBERSECURITY || to == EducationalTopic.PROGRAMMING
+            EducationalTopic.SCIENCE_ENGINEERING -> to == EducationalTopic.MATHEMATICS || to == EducationalTopic.ACADEMIC_RESEARCH
+            EducationalTopic.ACADEMIC_RESEARCH -> to == EducationalTopic.SCIENCE_ENGINEERING || to == EducationalTopic.AI_ML
         }
     }
 }

@@ -200,4 +200,77 @@ class PeerRecommenderTest {
         assertEquals(0.0, recommendations[0].score)
         assertTrue(recommendations[0].sharedTopics.isEmpty())
     }
+
+    @Test
+    fun `ranks peers with higher Jaccard similarity on liked educational posts higher`() {
+        val user1 = profile("peer1", "Peer One")
+        val user2 = profile("peer2", "Peer Two")
+
+        val p1 = candidatePost("p1", "authorX", "Data structures binary search tree algorithms.")
+        val p2 = candidatePost("p2", "authorX", "Graph theory and Dijkstra shortest path algorithm.")
+        val p3 = candidatePost("p3", "authorX", "Database query optimization and index design.")
+        val pCasual = candidatePost("pCasual", "authorY", "Went to beach for weekend party and music festival.")
+
+        // Current user liked p1 and p2
+        val myLikes = setOf("p1", "p2", "pCasual")
+        // Peer1 liked p1, p2 (Jaccard on educational: 2 / 2 = 1.0)
+        val peer1Likes = setOf("p1", "p2")
+        // Peer2 liked p2, p3 (Jaccard on educational: 1 / 3 = 0.33)
+        val peer2Likes = setOf("p2", "p3")
+
+        val context = PeerRecommendationContext(
+            currentUserId = "me",
+            candidateProfiles = listOf(user2, user1),
+            candidatePosts = listOf(p1, p2, p3, pCasual),
+            myLikedPostIds = myLikes,
+            peerLikedPostIds = mapOf("peer1" to peer1Likes, "peer2" to peer2Likes)
+        )
+
+        val recommendations = recommender.recommend(context)
+        assertEquals(2, recommendations.size)
+        assertEquals("peer1", recommendations[0].profile.publicKey, "Peer 1 with identical educational liked set should rank first")
+        assertTrue(recommendations[0].score > recommendations[1].score)
+        assertTrue(recommendations[0].reason.contains("shared liked educational post(s)"))
+    }
+
+    @Test
+    fun `ignores non-educational liked posts in Jaccard similarity calculation`() {
+        val user1 = profile("peer1", "Peer One")
+
+        val pCasual = candidatePost("pCasual", "authorY", "Went to beach for weekend party and music festival.")
+        val pEdu = candidatePost("pEdu", "authorX", "Quantum physics and quantum computing algorithms.")
+
+        // Both only liked a casual post
+        val context = PeerRecommendationContext(
+            currentUserId = "me",
+            candidateProfiles = listOf(user1),
+            candidatePosts = listOf(pCasual, pEdu),
+            myLikedPostIds = setOf("pCasual"),
+            peerLikedPostIds = mapOf("peer1" to setOf("pCasual"))
+        )
+
+        val recommendations = recommender.recommend(context)
+        assertEquals(1, recommendations.size)
+        assertFalse(recommendations[0].reason.contains("shared liked educational post(s)"), "Non-educational liked posts must be ignored")
+    }
+
+    @Test
+    fun `handles cold-start user without liked posts or topic preferences gracefully`() {
+        profileStore.updateSelectedTopics(emptySet())
+        val user1 = profile("peer1", "Active Contributor")
+        val eduPost = candidatePost("p1", "peer1", "Artificial intelligence neural networks and deep learning.")
+
+        val context = PeerRecommendationContext(
+            currentUserId = "me",
+            candidateProfiles = listOf(user1),
+            candidatePosts = listOf(eduPost),
+            myLikedPostIds = emptySet(),
+            peerLikedPostIds = emptyMap()
+        )
+
+        val recommendations = recommender.recommend(context)
+        assertEquals(1, recommendations.size)
+        assertEquals("peer1", recommendations[0].profile.publicKey)
+        assertTrue(recommendations[0].score > 0.0, "Educational contributor gets a modest baseline in cold-start")
+    }
 }

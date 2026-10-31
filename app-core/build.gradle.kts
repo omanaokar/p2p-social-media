@@ -17,6 +17,7 @@ kotlin {
 
 dependencies {
     api(project(":contracts"))
+    api(project(":ranker"))
     api(libs.sqlite)
     implementation(libs.serialization.json)
     implementation(libs.bouncycastle)

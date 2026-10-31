@@ -2,6 +2,7 @@ package com.proximity.ranker
 
 import com.proximity.contracts.FeedCandidate
 import com.proximity.contracts.InteractionType
+import com.proximity.contracts.Post
 import com.proximity.contracts.RankContext
 import com.proximity.contracts.RankedPost
 import com.proximity.ranker.classifier.EducationalTopic
@@ -31,6 +32,7 @@ import com.proximity.ranker.studygroup.StudyGroupMatch
 import com.proximity.ranker.studygroup.StudyGroupMatcher
 import com.proximity.ranker.studygroup.StudyGroupMatchingContext
 import java.time.Duration
+import java.time.Instant
 
 /**
  * Cohesive coordinator for all local ML and recommendation components in Proximity.
@@ -43,13 +45,16 @@ import java.time.Duration
  *   friend recommendations, study group matching, and adaptive learning topics.
  * - Interaction Loop: Feed interactions via [recordFeedInteraction] automatically update
  *   author affinities in [ranker] AND topic engagements in [adaptiveRecommender].
- * - Safety Enforcement: Moderation policies in [moderator] filter prohibited content
- *   consistently from both feed ranking and search retrieval.
+ * - Safety & Educational Enforcement: Moderation and classification strictly filter out
+ *   non-educational, inappropriate, or uncertain content from feed ranking, search,
+ *   and peer/study-group recommendations.
  */
 class RecommendationSystem(
     val profileStore: UserInterestProfileStore = InMemoryUserInterestProfileStore(),
     val classifier: TextContentClassifier = HeuristicTextClassifier(),
     val moderator: ContentModerator = DefaultContentModerator(classifier = classifier),
+    val clock: () -> Instant = { Instant.now() },
+    val postResolver: (suspend (String) -> Post?)? = null,
     val adaptiveRecommender: AdaptiveLearningRecommender = LocalAdaptiveLearningRecommender(
         profileStore = profileStore,
         classifier = classifier
@@ -58,18 +63,23 @@ class RecommendationSystem(
         classifier = classifier,
         profileStore = profileStore,
         moderator = moderator,
-        adaptiveRecommender = adaptiveRecommender
+        adaptiveRecommender = adaptiveRecommender,
+        postResolver = postResolver,
     ),
     val embeddingProvider: EmbeddingProvider? = null,
     val searchEngine: PostSearchEngine = if (embeddingProvider != null) {
         SemanticPostSearchEngine(
             embeddingProvider = embeddingProvider,
-            fallbackEngine = KeywordPostSearchEngine(classifier = classifier, moderator = moderator)
+            fallbackEngine = KeywordPostSearchEngine(classifier = classifier, moderator = moderator, clock = clock),
+            classifier = classifier,
+            moderator = moderator,
+            clock = clock
         )
     } else {
         KeywordPostSearchEngine(
             classifier = classifier,
-            moderator = moderator
+            moderator = moderator,
+            clock = clock
         )
     },
     val peerRecommender: PeerRecommender = LocalPeerRecommender(
@@ -79,15 +89,34 @@ class RecommendationSystem(
     val studyGroupMatcher: StudyGroupMatcher = LocalStudyGroupMatcher(
         profileStore = profileStore,
         classifier = classifier
-    )
+    ),
+    /** Optional application-owned durable ledger for interaction event IDs. */
+    val interactionEventLedger: InteractionEventLedger? = null,
 ) {
+    init {
+        ranker.setInteractionEventLedger(interactionEventLedger)
+    }
+
     /** Ranks feed candidates using proximity, engagement, freshness, and user interests. */
     suspend fun rankFeed(candidates: List<FeedCandidate>, context: RankContext): List<RankedPost> =
         ranker.rank(candidates, context)
 
     /** Records user interaction on a feed post, updating both author affinity and topic learning models. */
-    suspend fun recordFeedInteraction(postId: String, type: InteractionType, dwell: Duration? = null) =
-        ranker.recordInteraction(postId, type, dwell)
+    suspend fun recordFeedInteraction(
+        postId: String,
+        type: InteractionType,
+        dwell: Duration? = null,
+        post: Post? = null,
+        eventId: String? = null
+    ) = ranker.recordInteraction(postId, type, dwell, post, eventId)
+
+    /** Records user interaction on a feed post with an explicit post instance. */
+    suspend fun recordFeedInteraction(
+        post: Post,
+        type: InteractionType,
+        dwell: Duration? = null,
+        eventId: String? = null
+    ) = ranker.recordInteraction(post, type, dwell, eventId)
 
     /** Searches available candidates using BM25+ term matching and educational topic bonus. */
     fun search(query: String?, candidates: List<FeedCandidate>, limit: Int = 20): List<SearchResult> =

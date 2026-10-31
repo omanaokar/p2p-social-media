@@ -3,6 +3,10 @@ package com.proximity.core.store
 import com.proximity.core.AppConfig
 import com.proximity.core.wire.ObjectKind
 import com.proximity.core.wire.SignedObject
+import com.proximity.ranker.classifier.HeuristicTextClassifier
+import com.proximity.ranker.classifier.TextContentClassifier
+import com.proximity.ranker.moderation.ContentModerator
+import com.proximity.ranker.moderation.DefaultContentModerator
 import java.time.Duration
 import java.time.Instant
 
@@ -14,7 +18,11 @@ data class Rejection(val reason: String, val permanent: Boolean = true)
  * moderate, so every phone applies the same rules to what it accepts and
  * forwards.
  */
-class SpamGuard(private val config: AppConfig) {
+class SpamGuard(
+    private val config: AppConfig,
+    private val classifier: TextContentClassifier = HeuristicTextClassifier(),
+    private val moderator: ContentModerator = DefaultContentModerator(classifier = classifier)
+) {
 
     fun checkContent(obj: SignedObject, now: Instant): Rejection? {
         if (obj.timestamp.isAfter(now.plus(config.maxClockSkew))) return Rejection("dated in the future", permanent = false)
@@ -28,6 +36,17 @@ class SpamGuard(private val config: AppConfig) {
             }
             ObjectKind.POST -> {
                 val ttl = obj.long("ttl")
+                val body = obj.str("body")
+                if (config.strictEducationFilter) {
+                    val classification = classifier.classify(body)
+                    if (!classification.isEducational) {
+                        return Rejection("Rejected non-educational content (${classification.category}): ${classification.summary}", permanent = true)
+                    }
+                    val decision = moderator.decide(classification)
+                    if (!decision.isApproved) {
+                        return Rejection("Content policy rejection: ${decision.reason}", permanent = true)
+                    }
+                }
                 when {
                     obj.str("body").length > config.maxPostChars -> Rejection("post too long")
                     base64Bytes(obj.optStr("image")) > config.maxImageBytes -> Rejection("image too large")

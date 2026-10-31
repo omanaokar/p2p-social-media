@@ -38,6 +38,20 @@ interface ReactionRepository {
 
     /** Reaction summaries for the post and each of its comments, keyed by target id. */
     fun watchForPost(postId: String): Flow<Map<String, ReactionSummary>>
+
+    /** Post IDs with any active reaction by the given user. */
+    suspend fun getReactedPostIds(userId: String): Set<String> = emptySet()
+
+    /** Map of peerUserId -> post IDs with any active reaction by that peer. */
+    suspend fun getPeerReactedPostIds(): Map<String, Set<String>> = emptyMap()
+
+    /** @deprecated Reaction types are not constrained to likes; use [getReactedPostIds]. */
+    @Deprecated("Reaction types are not constrained to likes; use getReactedPostIds")
+    suspend fun getLikedPostIds(userId: String): Set<String> = getReactedPostIds(userId)
+
+    /** @deprecated Reaction types are not constrained to likes; use [getPeerReactedPostIds]. */
+    @Deprecated("Reaction types are not constrained to likes; use getPeerReactedPostIds")
+    suspend fun getPeerLikedPostIds(): Map<String, Set<String>> = getPeerReactedPostIds()
 }
 
 interface MessageRepository {

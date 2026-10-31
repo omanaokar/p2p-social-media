@@ -21,11 +21,11 @@ class SyncTest {
         val b = h.node("b")
         h.connect(a, b, signal = -40)
 
-        val post = a.core.posts.create("hello from a")
+        val post = a.core.posts.create("Kotlin coroutines tutorial from node A")
         val received = b.core.posts.watchFeedCandidates().awaitMatching { list -> list.any { it.post.id == post.id } }
             .single { it.post.id == post.id }
 
-        assertEquals("hello from a", received.post.body)
+        assertEquals(post.body, received.post.body)
         assertEquals(a.id, received.post.authorId)
         assertEquals(1, received.post.hopCount)
         assertEquals(a.id, received.receivedFrom)
@@ -39,16 +39,21 @@ class SyncTest {
         val h = Harness()
         val a = h.node("a")
         val b = h.node("b")
-        val p1 = a.core.posts.create("one")
-        val p2 = b.core.posts.create("two")
+        val p1 = a.core.posts.create("Data structures lecture: Binary search trees part one")
+        val p2 = b.core.posts.create("Data structures lecture: Binary search trees part two")
 
         h.connect(a, b)
 
         a.core.posts.watchFeedCandidates().awaitMatching { list -> list.map { it.post.id }.containsAll(listOf(p1.id, p2.id)) }
         b.core.posts.watchFeedCandidates().awaitMatching { list -> list.map { it.post.id }.containsAll(listOf(p1.id, p2.id)) }
         // Profiles travel in the hello, so authors have names.
-        a.core.profiles.updateMyProfile(displayName = "Alice")
+        val avatar = byteArrayOf(1, 2, 3, 4)
+        a.core.profiles.updateMyProfile(displayName = "Alice", avatar = avatar)
         b.core.posts.watchFeedCandidates().awaitMatching { list -> list.any { it.author?.displayName == "Alice" } }
+        val peer = b.core.profiles.watchNearbyPeers().awaitMatching { peers ->
+            peers.any { it.userId == a.id && it.profile.avatar?.contentEquals(avatar) == true }
+        }.single { it.userId == a.id }
+        assertTrue(peer.profile.avatar!!.contentEquals(avatar))
         h.closeAll()
     }
 
@@ -58,7 +63,7 @@ class SyncTest {
         val chain = (0..4).map { h.node("n$it") }
         chain.zipWithNext().forEach { (x, y) -> h.connect(x, y) }
 
-        val post = chain[0].core.posts.create("ripple")
+        val post = chain[0].core.posts.create("Advanced algorithms and graph traversal ripple study notes")
         for (i in 1..3) {
             val copy = chain[i].core.posts.watchFeedCandidates().awaitMatching { list -> list.any { it.post.id == post.id } }
             assertEquals(i, copy.single().post.hopCount, "hop count at n$i")
@@ -74,7 +79,7 @@ class SyncTest {
         val a = h.node("a")
         val b = h.node("b")
         h.connect(a, b)
-        val post = a.core.posts.create("rate my lunch")
+        val post = a.core.posts.create("Machine learning optimization lecture notes on gradient descent")
         b.core.posts.watchFeedCandidates().awaitMatching { it.isNotEmpty() }
 
         val comment = b.core.comments.add(post.id, "looks great")
@@ -100,7 +105,7 @@ class SyncTest {
         val h = Harness()
         val a = h.node("a")
         val b = h.node("b")
-        a.core.posts.create("short lived")
+        a.core.posts.create("Short lived tutorial on calculus and differential equations")
         h.clock.advance(Duration.ofHours(7))
         a.core.runCleanup()
         assertTrue(a.core.posts.watchFeedCandidates().first().isEmpty())
@@ -140,13 +145,13 @@ class SyncTest {
                 )),
             ),
         )
-        val honest = post(rogue.currentUser.id, "honest", rogue)
+        val honest = post(rogue.currentUser.id, "Honest educational notes on algorithms", rogue)
 
         rogueTransport.send("b", SyncMessage.Objects(listOf(forged, tampered)).encode())
         rogueTransport.send("b", SyncMessage.Objects(listOf(honest)).encode())
 
-        val feed = b.core.posts.watchFeedCandidates().awaitMatching { list -> list.any { it.post.body == "honest" } }
-        assertEquals(listOf("honest"), feed.map { it.post.body })
+        val feed = b.core.posts.watchFeedCandidates().awaitMatching { list -> list.any { it.post.body == "Honest educational notes on algorithms" } }
+        assertEquals(listOf("Honest educational notes on algorithms"), feed.map { it.post.body })
         h.closeAll()
     }
 
@@ -160,7 +165,7 @@ class SyncTest {
 
         h.disconnect(a, b)
         b.core.profiles.watchNearbyPeers().awaitMatching { it.isEmpty() }
-        val post = a.core.posts.create("while you were away")
+        val post = a.core.posts.create("Physics research notes on thermodynamics while you were away")
         settle()
         assertTrue(b.core.posts.watchFeedCandidates().first().isEmpty())
 
