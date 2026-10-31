@@ -85,11 +85,25 @@ class HeuristicTextClassifier : TextContentClassifier {
         WeightedTerm("tutorials", 2.0),
         WeightedTerm("how to implement", 2.5),
         WeightedTerm("how to solve", 2.5),
+        WeightedTerm("how does", 1.8),
+        WeightedTerm("why does", 1.8),
+        WeightedTerm("can someone explain", 2.2),
+        WeightedTerm("help me understand", 2.2),
+        WeightedTerm("need help with", 1.8),
+        WeightedTerm("question about", 1.8),
         WeightedTerm("explanation of", 2.5),
         WeightedTerm("explaining", 1.8),
         WeightedTerm("step by step guide", 2.5),
         WeightedTerm("study notes", 2.5),
         WeightedTerm("lecture notes", 2.5),
+        WeightedTerm("revision notes", 2.2),
+        WeightedTerm("exam preparation", 2.2),
+        WeightedTerm("preparing for an exam", 2.2),
+        WeightedTerm("studying for", 2.0),
+        WeightedTerm("learning about", 1.8),
+        WeightedTerm("working on", 1.5),
+        WeightedTerm("assignment help", 2.0),
+        WeightedTerm("homework help", 2.0),
         WeightedTerm("lecture summary", 2.5),
         WeightedTerm("time complexity", 2.5),
         WeightedTerm("space complexity", 2.5),
@@ -182,6 +196,8 @@ class HeuristicTextClassifier : TextContentClassifier {
         ),
         EducationalTopic.PROGRAMMING to listOf(
             WeightedTerm("programming", 2.0),
+            WeightedTerm("computer science", 2.2),
+            WeightedTerm("software development", 2.2),
             WeightedTerm("programming language", 2.2),
             WeightedTerm("programming tutorial", 2.2),
             WeightedTerm("software engineering", 2.2),
@@ -231,7 +247,36 @@ class HeuristicTextClassifier : TextContentClassifier {
             WeightedTerm("databases", 2.0),
             WeightedTerm("sql query", 2.2),
             WeightedTerm("query indexing", 2.2),
-            WeightedTerm("indexing", 1.8)
+            WeightedTerm("indexing", 1.8),
+            WeightedTerm("android development", 2.4),
+            WeightedTerm("android studio", 2.2),
+            WeightedTerm("activity lifecycle", 2.4),
+            WeightedTerm("mobile development", 2.2),
+            WeightedTerm("web development", 2.2),
+            WeightedTerm("frontend", 1.8),
+            WeightedTerm("backend", 1.8),
+            WeightedTerm("html", 1.6),
+            WeightedTerm("css", 1.6),
+            WeightedTerm("react", 1.6),
+            WeightedTerm("node.js", 1.8),
+            WeightedTerm("nodejs", 1.8),
+            WeightedTerm("git", 1.5),
+            WeightedTerm("github", 1.5),
+            WeightedTerm("api", 1.5),
+            WeightedTerm("apis", 1.5),
+            WeightedTerm("operating systems", 2.2),
+            WeightedTerm("operating system", 2.0),
+            WeightedTerm("os buffer", 2.2),
+            WeightedTerm("buffer management", 2.2),
+            WeightedTerm("buffer cache", 2.2),
+            WeightedTerm("memory buffer", 1.8),
+            WeightedTerm("computer networks", 2.2),
+            WeightedTerm("networking", 1.5),
+            WeightedTerm("dbms", 2.0),
+            WeightedTerm("normalization", 1.8),
+            WeightedTerm("deadlock", 1.8),
+            WeightedTerm("deadlocks", 1.8),
+            WeightedTerm("process scheduling", 2.2)
         ),
         EducationalTopic.DSA to listOf(
             WeightedTerm("algorithm", 2.0),
@@ -245,6 +290,14 @@ class HeuristicTextClassifier : TextContentClassifier {
             WeightedTerm("graph algorithm", 2.5),
             WeightedTerm("data structure", 2.5),
             WeightedTerm("data structures", 2.5),
+            WeightedTerm("dsa", 2.0),
+            WeightedTerm("leetcode", 2.0),
+            WeightedTerm("coding problem", 1.8),
+            WeightedTerm("coding problems", 1.8),
+            WeightedTerm("array", 1.5),
+            WeightedTerm("arrays", 1.5),
+            WeightedTerm("loop", 1.2),
+            WeightedTerm("loops", 1.2),
             WeightedTerm("binary search", 2.5),
             WeightedTerm("binary search tree", 2.5),
             WeightedTerm("binary tree", 2.2),
@@ -352,6 +405,8 @@ class HeuristicTextClassifier : TextContentClassifier {
             WeightedTerm("matrices", 1.5),
             WeightedTerm("matrix", 1.2),
             WeightedTerm("mathematics", 1.5),
+            WeightedTerm("math", 1.5),
+            WeightedTerm("maths", 1.5),
             WeightedTerm("probability", 1.2),
             WeightedTerm("statistics", 1.2),
             WeightedTerm("stochastic", 2.0)
@@ -435,7 +490,14 @@ class HeuristicTextClassifier : TextContentClassifier {
             WeightedTerm("citations", 1.8),
             WeightedTerm("citation", 1.8),
             WeightedTerm("methodology", 1.8),
-            WeightedTerm("arxiv", 2.0)
+            WeightedTerm("arxiv", 2.0),
+            WeightedTerm("economics", 1.8),
+            WeightedTerm("supply and demand", 2.2),
+            WeightedTerm("history", 1.5),
+            WeightedTerm("geography", 1.5),
+            WeightedTerm("english literature", 2.0),
+            WeightedTerm("essay", 1.5),
+            WeightedTerm("research question", 2.2)
         )
     )
 
@@ -682,7 +744,7 @@ class HeuristicTextClassifier : TextContentClassifier {
         }
 
         // Case D: Weak educational match in long or conversational text without intent signals
-        if (maxEduScore < 1.8 && intentBonus == 0.0 && (wordCount > 12 || nonEduScore > 0.0)) {
+        if (maxEduScore < 1.5 && intentBonus == 0.0 && (wordCount > 12 || nonEduScore > 0.0)) {
             return ClassificationResult(
                 category = PrimaryCategory.UNCERTAIN,
                 educationalTopics = emptySet(),
@@ -694,7 +756,7 @@ class HeuristicTextClassifier : TextContentClassifier {
         }
 
         // Case E: Educational score below threshold without structural intent
-        if (maxEduScore < 1.5 && intentBonus == 0.0) {
+        if (maxEduScore < 1.2 && intentBonus == 0.0) {
             return ClassificationResult(
                 category = PrimaryCategory.UNCERTAIN,
                 educationalTopics = emptySet(),
@@ -713,7 +775,9 @@ class HeuristicTextClassifier : TextContentClassifier {
 
         val confidence = when {
             maxEduScore >= 3.0 || (maxEduScore >= 2.0 && intentBonus >= 1.5) -> ConfidenceLevel.HIGH
-            maxEduScore >= 1.8 -> ConfidenceLevel.MEDIUM
+            // A clear topic term is enough for an ordinary study post. Earlier
+            // thresholds incorrectly rejected concise learner updates.
+            maxEduScore >= 1.5 -> ConfidenceLevel.MEDIUM
             maxEduScore >= 1.2 -> ConfidenceLevel.LOW
             else -> ConfidenceLevel.UNCERTAIN
         }

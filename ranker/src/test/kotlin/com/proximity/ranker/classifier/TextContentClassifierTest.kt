@@ -35,6 +35,39 @@ class TextContentClassifierTest {
     }
 
     @Test
+    fun `accepts ordinary learner questions when they identify a subject`() {
+        val questions = listOf(
+            "Can someone explain recursion? Need help with my assignment.",
+            "How does the Android activity lifecycle work in mobile development?",
+            "Need help with economics: how does supply and demand affect price?",
+        )
+
+        for (text in questions) {
+            val result = classifier.classify(text)
+            assertEquals(PrimaryCategory.EDUCATIONAL, result.category, "Expected an educational result for: $text")
+            assertTrue(result.isEducational)
+        }
+    }
+
+    @Test
+    fun `accepts concise subject-focused learner updates`() {
+        val result = classifier.classify("Recursion is confusing.")
+
+        assertEquals(PrimaryCategory.EDUCATIONAL, result.category)
+        assertTrue(result.isEducational)
+        assertEquals(ConfidenceLevel.MEDIUM, result.confidence)
+    }
+
+    @Test
+    fun `accepts operating systems buffer questions`() {
+        val result = classifier.classify("Can someone explain OS buffer management?")
+
+        assertEquals(PrimaryCategory.EDUCATIONAL, result.category)
+        assertTrue(result.isEducational)
+        assertEquals(EducationalTopic.PROGRAMMING, result.primaryTopic)
+    }
+
+    @Test
     fun `classifies Data Structures and Algorithms content`() {
         val text = "Comparing time complexity of quicksort and mergesort using asymptotic big-o notation on binary trees."
         val result = classifier.classify(text)

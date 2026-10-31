@@ -26,4 +26,6 @@ dependencies {
     implementation(libs.sqlite.bundled)
     implementation(libs.coroutines.core)
     implementation(libs.coroutines.android)
+    implementation(libs.coroutines.play.services)
+    implementation(libs.nearby)
 }

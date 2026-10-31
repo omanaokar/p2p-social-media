@@ -47,8 +47,13 @@ class SyncTest {
         a.core.posts.watchFeedCandidates().awaitMatching { list -> list.map { it.post.id }.containsAll(listOf(p1.id, p2.id)) }
         b.core.posts.watchFeedCandidates().awaitMatching { list -> list.map { it.post.id }.containsAll(listOf(p1.id, p2.id)) }
         // Profiles travel in the hello, so authors have names.
-        a.core.profiles.updateMyProfile(displayName = "Alice")
+        val avatar = byteArrayOf(1, 2, 3, 4)
+        a.core.profiles.updateMyProfile(displayName = "Alice", avatar = avatar)
         b.core.posts.watchFeedCandidates().awaitMatching { list -> list.any { it.author?.displayName == "Alice" } }
+        val peer = b.core.profiles.watchNearbyPeers().awaitMatching { peers ->
+            peers.any { it.userId == a.id && it.profile.avatar?.contentEquals(avatar) == true }
+        }.single { it.userId == a.id }
+        assertTrue(peer.profile.avatar!!.contentEquals(avatar))
         h.closeAll()
     }
 

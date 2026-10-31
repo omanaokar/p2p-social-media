@@ -1,10 +1,11 @@
 <resources>
-    <color name="ink">#111318</color>
-    <color name="paper">#FAF9F7</color>
-    <color name="surface">#FFFFFF</color>
-    <color name="muted">#68707D</color>
-    <color name="line">#E9E7E2</color>
-    <color name="accent">#5B50F8</color>
-    <color name="accent_dark">#3730A3</color>
-    <color name="mint">#DCFCE7</color>
+    <color name="background">#000000</color>
+    <color name="surface">#0A0A0A</color>
+    <color name="surface_elevated">#16181C</color>
+    <color name="text_primary">#E7E9EA</color>
+    <color name="text_secondary">#71767B</color>
+    <color name="divider">#2F3336</color>
+    <color name="accent">#1D9BF0</color>
+    <color name="success">#00BA7C</color>
+    <color name="error">#F4212E</color>
 </resources>
