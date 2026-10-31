@@ -37,8 +37,12 @@ data class ModerationDecision(
  * Configuration tunables for moderation enforcement policy.
  */
 data class ModerationPolicyConfig(
-    /** If true, posts classified as casual non-educational will be flagged/rejected rather than allowed. */
-    val strictEducationalOnly: Boolean = true,
+    /**
+     * If true, only verified educational posts are approved (the old education-only mode).
+     * If false (default), every post is allowed unless it contains abusive, profane,
+     * hateful, threatening, or adult content, which is always rejected.
+     */
+    val strictEducationalOnly: Boolean = false,
     /** Minimum confidence required for automatic approval of educational posts. */
     val minConfidenceForAutoApproval: ConfidenceLevel = ConfidenceLevel.MEDIUM
 )
@@ -55,7 +59,9 @@ interface ContentModerator {
  * Default implementation of content moderation policy.
  *
  * It enforces:
- * - Immediate REJECT for inappropriate, adult, abusive, or prohibited content.
+ * - Immediate REJECT for inappropriate, adult, abusive, profane, or prohibited content (always on).
+ * - ALLOW everything else by default. The rules below apply only when
+ *   [ModerationPolicyConfig.strictEducationalOnly] is enabled:
  * - FLAG_FOR_REVIEW for ambiguous/UNCERTAIN content (never silently approving ambiguous inputs).
  * - FLAG_FOR_REVIEW for non-educational casual content when [ModerationPolicyConfig.strictEducationalOnly] is true.
  * - ALLOW only for verified educational content meeting the minimum confidence threshold.
@@ -80,7 +86,16 @@ class DefaultContentModerator(
             )
         }
 
-        // 2. Ambiguity / Insufficient Evidence Enforcement
+        // 1b. Relaxed policy (default): nothing but abusive / profane / adult content is blocked.
+        if (!config.strictEducationalOnly) {
+            return ModerationDecision(
+                action = ModerationAction.ALLOW,
+                reason = "No abusive, profane, or explicit content detected.",
+                classification = classification
+            )
+        }
+
+        // 2. Ambiguity / Insufficient Evidence Enforcement (strict educational mode only)
         if (classification.category == PrimaryCategory.UNCERTAIN || classification.confidence == ConfidenceLevel.UNCERTAIN) {
             return ModerationDecision(
                 action = ModerationAction.FLAG_FOR_REVIEW,

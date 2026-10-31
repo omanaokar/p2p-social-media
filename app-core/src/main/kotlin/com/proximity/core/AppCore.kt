@@ -83,7 +83,8 @@ class AppCore private constructor(
     fun runCleanup() = sync.runCleanup()
 
     /**
-     * Ranked, strictly moderated educational feed candidates held by this device.
+     * Ranked feed candidates held by this device. Abusive, profane and adult posts are filtered out;
+     * educational posts are boosted when relevant but are not required.
      * The post repository owns candidate construction and the recommendation system owns ranking.
      */
     fun watchRankedEducationalFeed(): Flow<List<RankedPost>> =

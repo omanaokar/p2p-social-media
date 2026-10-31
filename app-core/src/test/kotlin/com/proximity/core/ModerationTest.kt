@@ -85,8 +85,38 @@ class ModerationTest {
     }
 
     @Test
-    fun `publishing rejects non-educational, inappropriate, and uncertain posts`() = runBlocking {
+    fun `publishing allows casual posts but blocks abusive, profane, and adult posts`() = runBlocking {
         val h = Harness()
+        val a = h.node("a")
+
+        // Casual, non-educational and ambiguous posts are allowed by default
+        a.core.posts.create("Going out for tacos and beer at the beach party this weekend! Weekend vibes.")
+        a.core.posts.create("Skipping calculus class today to play soccer with friends!")
+        a.core.posts.create("Hey guys, what do you think about this?")
+
+        // Adult content is blocked
+        val exAdult = assertFailsWith<IllegalArgumentException> {
+            a.core.posts.create("Check out my adult xxx nsfw photos and videos on onlyfans.")
+        }
+        assertTrue(exAdult.message!!.contains("blocked", ignoreCase = true))
+
+        // Profanity and personal abuse are blocked
+        val exProfane = assertFailsWith<IllegalArgumentException> {
+            a.core.posts.create("This is complete bullshit and you are an asshole.")
+        }
+        assertTrue(exProfane.message!!.contains("blocked", ignoreCase = true))
+
+        // Threats are blocked
+        assertFailsWith<IllegalArgumentException> {
+            a.core.posts.create("Just go die, nobody wants you here.")
+        }
+
+        h.closeAll()
+    }
+
+    @Test
+    fun `strict education mode rejects non-educational, inappropriate, and uncertain posts`() = runBlocking {
+        val h = Harness(AppConfig(strictEducationFilter = true))
         val a = h.node("a")
 
         // Non-educational
@@ -121,8 +151,8 @@ class ModerationTest {
     }
 
     @Test
-    fun `incoming non-educational posts from peers are rejected during ingest and never visible in feed`() = runBlocking {
-        val h = Harness()
+    fun `strict mode - incoming non-educational posts from peers are rejected during ingest and never visible in feed`() = runBlocking {
+        val h = Harness(AppConfig(strictEducationFilter = true))
         val a = h.node("a")
         val b = h.node("b")
         h.connect(a, b)
@@ -146,6 +176,34 @@ class ModerationTest {
         // Verify device B does not hold or display this post
         val feedB = b.core.posts.watchFeedCandidates().first()
         assertTrue(feedB.none { it.post.id == nonEduObject.id })
+
+        h.closeAll()
+    }
+
+    @Test
+    fun `incoming abusive posts from peers are rejected during ingest and never visible in feed`() = runBlocking {
+        val h = Harness()
+        val a = h.node("a")
+        val b = h.node("b")
+        h.connect(a, b)
+
+        val peerIdentity = LocalIdentity.load(InMemoryKeyStore())
+        val abusiveObject = SignedObject.create(
+            ObjectKind.POST,
+            mapOf(
+                "authorId" to peerIdentity.currentUser.id,
+                "body" to "You are such an asshole and this is bullshit.",
+                "createdAt" to h.clock.now().toEpochMilli(),
+                "ttl" to Duration.ofHours(1).toMillis(),
+            ),
+            peerIdentity,
+        )
+
+        a.transport.send("b", SyncMessage.Objects(listOf(abusiveObject)).encode())
+        settle()
+
+        val feedB = b.core.posts.watchFeedCandidates().first()
+        assertTrue(feedB.none { it.post.id == abusiveObject.id })
 
         h.closeAll()
     }

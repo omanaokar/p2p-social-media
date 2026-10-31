@@ -169,6 +169,29 @@ class TextContentClassifierTest {
     }
 
     @Test
+    fun `detects profanity and cuss words as INAPPROPRIATE`() {
+        val posts = listOf(
+            "What the fuck is wrong with this compiler",
+            "Our professor is an asshole and this lab is bullshit.",
+            "Tu chutiya hai yaar"
+        )
+        for (text in posts) {
+            val result = classifier.classify(text)
+            assertEquals(PrimaryCategory.INAPPROPRIATE, result.category, text)
+            assertTrue(result.isInappropriate, text)
+            assertTrue(result.inappropriateFlags.contains(InappropriateFlag.HARASSMENT_ABUSE), text)
+        }
+    }
+
+    @Test
+    fun `does not flag clean educational text as profane`() {
+        val result = classifier.classify(
+            "Lienard-Wiechert retarded potentials in classical electromagnetism and the Python assert statement."
+        )
+        assertFalse(result.isInappropriate)
+    }
+
+    @Test
     fun `rejects misleading anti-educational dismissals containing academic keywords`() {
         val misleadingCases = listOf(
             "Skipping calculus class today to go play soccer with friends!",

@@ -37,15 +37,14 @@ class SpamGuard(
             ObjectKind.POST -> {
                 val ttl = obj.long("ttl")
                 val body = obj.str("body")
-                if (config.strictEducationFilter) {
-                    val classification = classifier.classify(body)
-                    if (!classification.isEducational) {
-                        return Rejection("Rejected non-educational content (${classification.category}): ${classification.summary}", permanent = true)
-                    }
-                    val decision = moderator.decide(classification)
-                    if (!decision.isApproved) {
-                        return Rejection("Content policy rejection: ${decision.reason}", permanent = true)
-                    }
+                val classification = classifier.classify(body)
+                if (config.strictEducationFilter && !classification.isEducational) {
+                    return Rejection("Rejected non-educational content (${classification.category}): ${classification.summary}", permanent = true)
+                }
+                // Abusive, profane, hateful, threatening and adult posts are always rejected.
+                val decision = moderator.decide(classification)
+                if (!decision.isApproved) {
+                    return Rejection("Content policy rejection: ${decision.reason}", permanent = true)
                 }
                 when {
                     obj.str("body").length > config.maxPostChars -> Rejection("post too long")

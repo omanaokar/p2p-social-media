@@ -106,9 +106,10 @@ class LocalRanker(
             postAuthors[post.id] = post.authorId
             postCache[post.id] = post
 
-            // Content classification & moderation check: strictly enforce educational-only content
+            // Content classification & moderation check: abusive, profane, hateful and adult
+            // posts are never shown. Educational relevance only boosts ranking; it is not required.
             val classification: ClassificationResult = classifier.classify(post.body)
-            if (!classification.isEducational || classification.category != PrimaryCategory.EDUCATIONAL) {
+            if (classification.isInappropriate) {
                 return@mapNotNull null
             }
 
@@ -144,11 +145,15 @@ class LocalRanker(
             val authorScore = ((affinity + 1.0) / 2.0).coerceIn(0.0, 1.0)
 
             // 6. Educational Content Boost & User Interest Matching
-            val educationalScore = when (classification.confidence) {
-                ConfidenceLevel.HIGH -> 1.0
-                ConfidenceLevel.MEDIUM -> 0.7
-                ConfidenceLevel.LOW -> 0.4
-                ConfidenceLevel.UNCERTAIN -> 0.0
+            val educationalScore = if (classification.category != PrimaryCategory.EDUCATIONAL) {
+                0.0
+            } else {
+                when (classification.confidence) {
+                    ConfidenceLevel.HIGH -> 1.0
+                    ConfidenceLevel.MEDIUM -> 0.7
+                    ConfidenceLevel.LOW -> 0.4
+                    ConfidenceLevel.UNCERTAIN -> 0.0
+                }
             }
 
             // 7. Topic Preference Score (Cold-start interest alignment and learned topic scores)

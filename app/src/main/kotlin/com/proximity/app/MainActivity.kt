@@ -119,7 +119,7 @@ class MainActivity : Activity() {
         screenJob = scope.launch { core?.posts?.watchFeedCandidates()?.collect { candidates ->
             clearFrom(2)
             val nearby = candidates.filter { it.receivedFrom != null || !it.isMine }
-            if (nearby.isEmpty()) empty("No nearby posts yet", "When another learner connects, their public educational posts will show here.")
+            if (nearby.isEmpty()) empty("No nearby posts yet", "When another learner connects, their public posts will show here.")
             nearby.forEach(::post)
         } }
     }
@@ -140,7 +140,7 @@ class MainActivity : Activity() {
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL; setPadding(dp(11),0,0,dp(12)); layoutParams = LinearLayout.LayoutParams(0,-2,1f)
                 addView(TextView(this@MainActivity).apply { text = "${candidate.author?.displayName ?: "Nearby learner"}  ·  ${if (candidate.isMine) "You" else "Nearby"}"; textSize = 15f; setTypeface(null,1); setTextColor(PRIMARY) })
-                addView(TextView(this@MainActivity).apply { text = "Educational post"; textSize = 13f; setTextColor(SECONDARY); setPadding(0,dp(1),0,0) })
+                addView(TextView(this@MainActivity).apply { text = "Post"; textSize = 13f; setTextColor(SECONDARY); setPadding(0,dp(1),0,0) })
                 addView(TextView(this@MainActivity).apply { text = candidate.post.body; textSize = 16f; setTextColor(PRIMARY); setLineSpacing(dp(3).toFloat(),1f); setPadding(0,dp(7),0,dp(10)) })
                 candidate.post.image?.let { bytes -> addView(ImageView(this@MainActivity).apply { setImageBitmap(BitmapFactory.decodeByteArray(bytes,0,bytes.size)); scaleType = ImageView.ScaleType.CENTER_CROP; background = round(SURFACE_ELEVATED, 14); clipToOutline = true; contentDescription = "Post image"; layoutParams = LinearLayout.LayoutParams(-1,dp(210)) }) }
                 addView(LinearLayout(this@MainActivity).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0,dp(13),0,0); action("◯",candidate.commentCount.toString(),"Replies"){replies(candidate.post.id)}; action("♡",candidate.reactionCounts.values.sum().toString(),"React"){react(candidate.post.id)}; action("↗","","Share"){sharePost(candidate.post.body)} })
@@ -156,7 +156,7 @@ class MainActivity : Activity() {
             setOnEditorActionListener { _, _, _ -> explore(text.toString().trim().takeIf { it.isNotEmpty() }); true }
         }
         stream.addView(search, LinearLayout.LayoutParams(-1,dp(46)).apply{setMargins(dp(16),dp(10),dp(16),dp(16))})
-        if (query.isNullOrBlank()) { heading("Topics to explore"); listOf("Programming","Data structures","Mathematics","AI & ML").forEach{topic(it){ explore(it) }}; heading("Discover nearby"); empty("Learn together, nearby","Connect with nearby learners to discover their public educational posts.")
+        if (query.isNullOrBlank()) { heading("Topics to explore"); listOf("Programming","Data structures","Mathematics","AI & ML").forEach{topic(it){ explore(it) }}; heading("Discover nearby"); empty("Learn together, nearby","Connect with nearby learners to discover their public posts.")
         } else {
             heading("Results for “$query”")
             screenJob = scope.launch { core?.posts?.watchFeedCandidates()?.collect { candidates ->
@@ -253,7 +253,7 @@ class MainActivity : Activity() {
         addView(TextView(this@MainActivity).apply{text=profile.displayName?:"Your name";textSize=20f;setTypeface(null,1);setTextColor(PRIMARY);setPadding(dp(16),dp(12),0,0)}); addView(TextView(this@MainActivity).apply{text="@${profile.publicKey.take(10)}";textSize=14f;setTextColor(SECONDARY);setPadding(dp(16),dp(3),0,dp(15))})
     })
 
-    private fun compose() { val text=EditText(this).apply{hint="Explain a concept, ask a study question, or share notes";minLines=5;textSize=18f;setTextColor(PRIMARY);setHintTextColor(SECONDARY);setBackgroundColor(Color.TRANSPARENT)}; val hint=TextView(this).apply{this.text="Tip: name the topic and use context, e.g. “Kotlin coroutines tutorial: how does structured concurrency work?”";textSize=13f;setTextColor(SECONDARY);setPadding(dp(16),0,dp(16),dp(8))}; val photo=TextView(this).apply{this.text=if(pendingImage==null)"▧  Add photo" else "✓ Photo attached";textSize=15f;setTextColor(ACCENT);setPadding(dp(16),dp(8),0,dp(10));setOnClickListener{startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},PICK_IMAGE)}}; AlertDialog.Builder(this).setTitle("Create post").setView(LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(18),dp(12),0);addView(text);addView(hint);addView(photo)}).setNegativeButton("Cancel",null).setPositiveButton("Post"){_,_->scope.launch(Dispatchers.IO){runCatching{core?.posts?.create(text.text.toString(),pendingImage);pendingImage=null}.onFailure{withContext(Dispatchers.Main){popup("Post wasn’t published",it.message?:"Only approved educational posts can be shared.")}}}}.show() }
+    private fun compose() { val text=EditText(this).apply{hint="What’s on your mind?";minLines=5;textSize=18f;setTextColor(PRIMARY);setHintTextColor(SECONDARY);setBackgroundColor(Color.TRANSPARENT)}; val hint=TextView(this).apply{this.text="Please keep it respectful — abusive, profane or explicit posts are blocked.";textSize=13f;setTextColor(SECONDARY);setPadding(dp(16),0,dp(16),dp(8))}; val photo=TextView(this).apply{this.text=if(pendingImage==null)"▧  Add photo" else "✓ Photo attached";textSize=15f;setTextColor(ACCENT);setPadding(dp(16),dp(8),0,dp(10));setOnClickListener{startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},PICK_IMAGE)}}; AlertDialog.Builder(this).setTitle("Create post").setView(LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(18),dp(12),0);addView(text);addView(hint);addView(photo)}).setNegativeButton("Cancel",null).setPositiveButton("Post"){_,_->scope.launch(Dispatchers.IO){runCatching{core?.posts?.create(text.text.toString(),pendingImage);pendingImage=null}.onFailure{withContext(Dispatchers.Main){popup("Post wasn’t published",it.message?:"This post couldn’t be published.")}}}}.show() }
     private fun react(id:String){scope.launch(Dispatchers.IO){core?.reactions?.add(id,"like")}}
     private fun sharePost(body: String) {
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {

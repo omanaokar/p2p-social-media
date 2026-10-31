@@ -44,14 +44,19 @@ class PostRepositoryImpl(
 
     override suspend fun create(body: String, image: ByteArray?): Post = withContext(io) {
         require(body.isNotBlank() || image != null) { "Post is empty" }
+        val classification = classifier.classify(body)
         if (config.strictEducationFilter) {
-            val classification = classifier.classify(body)
             require(classification.isEducational) {
                 "Only educational posts can be published. Found ${classification.category}: ${classification.summary}"
             }
-            val decision = moderator.decide(classification)
-            require(decision.isApproved) {
+        }
+        // Abusive, profane, hateful, threatening and adult posts are always blocked.
+        val decision = moderator.decide(classification)
+        require(decision.isApproved) {
+            if (config.strictEducationFilter) {
                 "Only educational posts can be published. Moderation rejected: ${decision.reason}"
+            } else {
+                "Post blocked: ${decision.reason}"
             }
         }
         val obj = SignedObject.create(
@@ -107,13 +112,10 @@ class PostRepositoryImpl(
             )
         }
 
-        return if (config.strictEducationFilter) {
-            candidates.filter { candidate ->
-                val classification = classifier.classify(candidate.post.body)
-                classification.isEducational && moderator.decide(classification).isApproved
-            }
-        } else {
-            candidates
+        return candidates.filter { candidate ->
+            val classification = classifier.classify(candidate.post.body)
+            (!config.strictEducationFilter || classification.isEducational) &&
+                moderator.decide(classification).isApproved
         }
     }
 

@@ -86,8 +86,8 @@ class RecommendationSystemIntegrationTest {
 
         val casualPost = candidate("p3", "Having a wonderful weekend brunch with friends at the park.")
         val rankedWithCasual = system.rankFeed(listOf(casualPost, aiPost), RankContext(now, "me"))
-        assertEquals(1, rankedWithCasual.size, "Casual content must be excluded from feed ranking")
-        assertEquals("p1", rankedWithCasual[0].candidate.post.id)
+        assertEquals(2, rankedWithCasual.size, "Casual content is allowed in the feed")
+        assertEquals("p1", rankedWithCasual[0].candidate.post.id, "Relevant educational content still ranks above casual content")
     }
 
     @Test
@@ -100,6 +100,19 @@ class RecommendationSystemIntegrationTest {
         val ranked = system.rankFeed(listOf(eduPost, adultPost), RankContext(now, "me"))
 
         assertEquals(1, ranked.size, "Adult content must be excluded from feed ranking")
+        assertEquals("p1", ranked.first().candidate.post.id)
+    }
+
+    @Test
+    fun `content moderation rejects profane and abusive posts from feed ranking`() = runBlocking {
+        val system = RecommendationSystem()
+
+        val eduPost = candidate("p1", "Algorithms for graph traversal: Breadth first search.")
+        val profanePost = candidate("p2", "This assignment is bullshit and the professor is an asshole.")
+
+        val ranked = system.rankFeed(listOf(eduPost, profanePost), RankContext(now, "me"))
+
+        assertEquals(1, ranked.size, "Profane content must be excluded from feed ranking")
         assertEquals("p1", ranked.first().candidate.post.id)
     }
 

@@ -36,8 +36,11 @@ data class AppConfig(
     val maxObjectsPerMessage: Int = 20,
     /** Don't ask a second peer for an object we requested this recently. */
     val wantRetryAfter: Duration = Duration.ofSeconds(30),
-    /** Whether strict educational-only classification and filtering is enforced on posts. */
-    val strictEducationFilter: Boolean = true,
+    /**
+     * Whether posts must also be educational. Off by default: posts are only checked for
+     * abusive, profane, hateful, threatening, or adult content, which is always blocked.
+     */
+    val strictEducationFilter: Boolean = false,
 ) {
     val maxPostHopCount: Int get() = maxRelayHops + 1
     val maxDmHopCount: Int get() = dmMaxRelayHops + 1

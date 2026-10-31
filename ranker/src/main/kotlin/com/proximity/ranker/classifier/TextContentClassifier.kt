@@ -39,7 +39,16 @@ class HeuristicTextClassifier : TextContentClassifier {
         "kill yourself", "kys", "die in a fire", "hang yourself", "go die",
         "death threat", "bomb threat", "mass shooting", "terrorist attack",
         "buy drugs", "sell drugs", "buy cocaine", "sell cocaine", "buy heroin",
-        "buy meth", "buy weed", "faggot", "nigger"
+        "buy meth", "buy weed",
+        // Profanity, cuss words and personal abuse (English)
+        "fuck", "fucks", "fucked", "fucking", "fucker", "motherfucker",
+        "shit", "shitty", "bullshit", "horseshit", "bitch", "bitches", "asshole", "arsehole",
+        "dumbass", "jackass", "bastard", "dickhead", "cunt", "twat", "wanker", "slut",
+        "whore", "piss off", "screw you", "shut the fuck up", "stfu",
+        // Profanity and abuse (Hindi / Marathi, romanised)
+        "madarchod", "maderchod", "behenchod", "bhenchod", "bhosdike", "bhosdi", "bhosda",
+        "chutiya", "chutiye", "gandu", "harami", "haramkhor", "lauda", "lavda", "bhadwa", "bhadva",
+        "saala kutta", "tujhi aai", "aaichi gand", "faggot", "nigger"
     ).map { term -> Regex("\\b${Regex.escape(term)}\\b", RegexOption.IGNORE_CASE) }
 
     // Anti-educational dismissals, negations, and casual misuse of academic keywords
